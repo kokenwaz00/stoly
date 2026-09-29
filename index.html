@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>STOLY — залы и автозачисления на кошелёк</title>
-  <meta name="description" content="Подключите криптокошелёк, займите место за столом. Выплаты зачисляются на адрес вашего кошелька автоматически." />
+  <title>STOLY — залы с выплатами на Arbitrum</title>
+  <meta name="description" content="Подключите крипто-кошелёк на Arbitrum, купите USDT место за столом. Выплаты зачисляются мгновенно на ваш адрес в блокчейне." />
   <meta name="theme-color" content="#070b14" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="manifest" href="site.webmanifest" />
@@ -26,10 +26,8 @@
         <a href="#/app" data-route="user">Залы</a>
         <a href="#/cabinet" data-route="cabinet">Кабинет</a>
         <a href="#/rules" data-route="rules">Правила</a>
-        <a href="#/admin" data-route="admin">Админ</a>
       </nav>
       <div class="header-actions">
-        <span id="adminLabel" class="pill hidden">Админ</span>
         <button class="nav-btn hidden" id="logoutBtn" type="button">Выйти</button>
         <button class="btn btn-wallet btn-sm" id="headerConnect" type="button">Кошелёк</button>
       </div>
@@ -39,35 +37,37 @@
   <main id="main">
     <section class="screen" id="screenHome">
       <div class="hero">
-        <p class="eyebrow">Продукт готов к запуску · кошелёк настоящий</p>
-        <h1>Залы с автозачислением на ваш криптокошелёк</h1>
-        <p class="lead">Подключите MetaMask или другой кошелёк, купите место за столом. Когда за стол заходят следующие участники, доля сразу падает на адрес вашего кошелька — без заявок и ручных выплат.</p>
+        <p class="eyebrow">На Arbitrum · реальные USDT выплаты</p>
+        <h1>Залы с автоматическими выплатами в блокчейне</h1>
+        <p class="lead">Подключите MetaMask или другой кошелёк на Arbitrum, купите место за столом за 100 USDT. Когда за стол заходят участники более высокого уровня, выплаты мгновенно поступают на ваш адрес.</p>
         <div class="hero-cta">
           <a class="btn btn-buy" href="#/app">Открыть залы</a>
           <a class="btn btn-sec" href="#/rules">Как это работает</a>
         </div>
         <ul class="hero-points">
           <li>EIP-6963: MetaMask, Rabby, Coinbase Wallet</li>
+          <li>Arbitrum Sepolia / Arbitrum One</li>
+          <li>Реальные транзакции USDT в блокчейне</li>
           <li>Один адрес — одна покупка на стол</li>
-          <li>Выплаты мгновенно на тот же адрес</li>
+          <li>Выплаты мгновенно на адрес кошелька</li>
         </ul>
       </div>
       <div class="home-grid">
         <article class="panel">
-          <h2>1. Кошелёк</h2>
-          <p class="muted">Сайт запрашивает только адрес. Это ваш идентификатор и реквизиты для зачислений.</p>
+          <h2>1. Кошелёк на Arbitrum</h2>
+          <p class="muted">Подключите MetaMask или другой кошелёк. Убедитесь, что вы на сети Arbitrum Sepolia или Arbitrum One.</p>
         </article>
         <article class="panel">
-          <h2>2. Стол</h2>
-          <p class="muted">Открытые залы принимают покупку с внутреннего баланса, привязанного к адресу.</p>
+          <h2>2. Купить место</h2>
+          <p class="muted">Первый стол стоит 100 USDT. Одобрите расход USDT и отправьте транзакцию покупки в блокчейн.</p>
         </article>
         <article class="panel">
-          <h2>3. Автовыплата</h2>
-          <p class="muted">Сумма покупки делится между теми, кто зашёл раньше на этом столе, и сразу числится на их адресах.</p>
+          <h2>3. Получить выплату</h2>
+          <p class="muted">Когда участник более высокого уровня купит место, 100 USDT делятся поровну между всеми участниками предыдущих уровней. Выплаты зачисляются автоматически.</p>
         </article>
       </div>
       <div class="panel notice">
-        <strong>Важно.</strong> Подключение кошелька — настоящее. Движение средств внутри продукта — внутренние зачисления на адрес (не перевод ETH/USDT в сети). Это не инвестиционное предложение.
+        <strong>Важно.</strong> Это финансовая система с риском. Вы можете потерять свои средства. Убедитесь, что понимаете механику работы перед инвестированием. Используйте только USDT, которые готовы потерять.
       </div>
     </section>
 
@@ -81,10 +81,10 @@
       </div>
 
       <div class="stats-bar">
-        <div class="stat"><div class="val" id="uBuys">0</div><div class="lbl">Покупок</div></div>
-        <div class="stat"><div class="val" id="uLevel">1</div><div class="lbl">Уровень</div></div>
-        <div class="stat"><div class="val" id="uMelons">0</div><div class="lbl">Оборот</div></div>
-        <div class="stat"><div class="val" id="uPaid">0</div><div class="lbl">Выплачено</div></div>
+        <div class="stat"><div class="val" id="uBuys">0</div><div class="lbl">Покупок на столе</div></div>
+        <div class="stat"><div class="val" id="uLevel">1</div><div class="lbl">Текущий уровень</div></div>
+        <div class="stat"><div class="val" id="uMelons">0</div><div class="lbl">Оборот (USDT)</div></div>
+        <div class="stat"><div class="val" id="uPaid">—</div><div class="lbl">Выплачено</div></div>
       </div>
 
       <div class="tables-grid" id="uTables"></div>
@@ -93,11 +93,11 @@
         <h2>Стол <span id="uTableTitle">1</span> <span class="badge" id="uBadge">открыт</span></h2>
         <div class="levels" id="uLevels"></div>
         <div class="buy-form" id="uBuyForm">
-          <div class="price-tag" id="uPrice">= 100</div>
+          <div class="price-tag" id="uPrice">= 100 USDT</div>
           <button class="btn btn-buy" id="uBuyBtn" type="button">Купить место</button>
         </div>
         <div class="flow-box">
-          Покупка списывается с баланса адреса. Доля автоматически зачисляется на кошельки участников более раннего уровня этого стола. История — в кабинете.
+          Покупка за 100 USDT отправляется в смарт-контракт на Arbitrum. Доля автоматически распределяется на кошельки всех участников более ранних уровней этого же стола.
         </div>
         <div class="plist">
           <h3>Участники стола</h3>
@@ -109,33 +109,22 @@
     <section class="screen" id="screenCabinet">
       <div class="panel">
         <h2>Кабинет</h2>
-        <p class="muted" id="cabWallet">Подключите кошелёк, чтобы видеть баланс и выплаты на ваш адрес.</p>
+        <p class="muted" id="cabWallet">Подключите кошелёк на Arbitrum, чтобы видеть баланс и выплаты.</p>
         <div class="stats-bar cab-stats">
-          <div class="stat"><div class="val" id="cabBal">—</div><div class="lbl">Баланс адреса</div></div>
-          <div class="stat"><div class="val" id="cabIn">—</div><div class="lbl">Получено выплат</div></div>
-          <div class="stat"><div class="val" id="cabOut">—</div><div class="lbl">Потрачено на столы</div></div>
+          <div class="stat"><div class="val" id="cabBal">—</div><div class="lbl">Баланс USDT</div></div>
+          <div class="stat"><div class="val" id="cabIn">—</div><div class="lbl">Получено выплат (USDT)</div></div>
+          <div class="stat"><div class="val" id="cabOut">—</div><div class="lbl">Потрачено</div></div>
         </div>
       </div>
       <div class="panel">
-        <h2>Автозачисления на кошелёк</h2>
-        <p class="muted">Каждая выплата сразу попадает на адрес получателя, без подтверждения с вашей стороны.</p>
+        <h2>Выплаты в блокчейне</h2>
+        <p class="muted">Каждая выплата записана в смарт-контракте и готова к получению. Нажмите кнопку ниже, чтобы забрать все доступные выплаты.</p>
         <div class="scroll">
           <table class="data">
             <thead>
-              <tr><th>Когда</th><th>Стол</th><th>От</th><th>Сумма</th><th>Статус</th></tr>
+              <tr><th>Когда</th><th>Стол</th><th>От кого</th><th>Сумма (USDT)</th><th>Статус</th></tr>
             </thead>
             <tbody id="cabPayouts"></tbody>
-          </table>
-        </div>
-      </div>
-      <div class="panel">
-        <h2>Мои места</h2>
-        <div class="scroll">
-          <table class="data">
-            <thead>
-              <tr><th>Стол</th><th>Ур</th><th>Внёс</th><th>Получил</th></tr>
-            </thead>
-            <tbody id="cabBuys"></tbody>
           </table>
         </div>
       </div>
@@ -143,17 +132,27 @@
 
     <section class="screen" id="screenRules">
       <div class="panel prose">
-        <h2>Правила</h2>
+        <h2>Как это работает</h2>
         <ol>
-          <li>Участник определяется адресом подключённого кошелька.</li>
-          <li>Один адрес может купить каждый стол только один раз.</li>
-          <li>Цена стола фиксирована. Списание идёт с внутреннего баланса адреса.</li>
-          <li>При покупке сумма автоматически распределяется между участниками более раннего уровня того же стола и зачисляется на их адреса.</li>
-          <li>Если ранних участников нет, сумма остаётся в обороте стола без персональных выплат.</li>
-          <li>Новые столы открываются по расписанию или админом.</li>
+          <li><strong>Уровни:</strong> Каждый стол имеет 5 уровней. Каждый новый участник входит на текущий уровень.</li>
+          <li><strong>Цена:</strong> Первый стол стоит 100 USDT. Один адрес может купить каждый стол только один раз.</li>
+          <li><strong>Уровни сложности:</strong>
+            <ul>
+              <li>Уровень 1: вход (0 покупок)</li>
+              <li>Уровень 2: 5 покупок</li>
+              <li>Уровень 3: 15 покупок</li>
+              <li>Уровень 4: 35 покупок</li>
+              <li>Уровень 5: 70 покупок</li>
+            </ul>
+          </li>
+          <li><strong>Выплаты:</strong> Когда новый участник покупает место на любом уровне выше первого, его платёж делится поровну между всеми участниками всех предыдущих уровней этого же стола. Выплаты автоматически поступают в смарт-контракт.</li>
+          <li><strong>Получение выплат:</strong> Вы можете забрать свои выплаты в любой момент. Нажмите кнопку "Забрать выплаты" в кабинете.</li>
+          <li><strong>Блокчейн:</strong> Все транзакции записаны в Arbitrum. Выплаты безвозвратны и необратимы.</li>
         </ol>
+        <h2>Риск</h2>
+        <p>Это финансовая схема с высоким риском. Новые участники платят предыдущим. Если количество новых участников прекратится, выплаты прекратятся. Вы можете потерять все вложенные средства. Используйте только USDT, которые вы готовы потерять полностью.</p>
         <h2>Статус продукта</h2>
-        <p>Интерфейс, кошельки и автозачисления на адрес готовы к использованию. Переводы ETH, USDT и других токенов в блокчейне не выполняются: это внутренний реестр на тот же адрес, что у кошелька.</p>
+        <p>Смарт-контракт развёрнут на Arbitrum Sepolia для тестирования. Готов к использованию на Arbitrum One с реальными средствами (на ваш риск и ответственность).</p>
       </div>
     </section>
 
@@ -171,79 +170,30 @@
     </section>
 
     <section class="screen" id="screenAdmin">
-      <div class="speed-bar">
-        <span>Время:</span>
-        <button type="button" data-speed="1" class="on">1×</button>
-        <button type="button" data-speed="60">1м=1ч</button>
-        <button type="button" data-speed="3600">1с=1ч</button>
-        <button type="button" class="btn btn-sec" id="aOpenT2">Открыть стол 2</button>
-        <button type="button" class="btn btn-sec" id="aExport">Экспорт JSON</button>
-        <button type="button" class="btn btn-danger" id="aReset">Сброс БД</button>
-      </div>
-
-      <div class="stats-bar">
-        <div class="stat"><div class="val" id="aTotal">0</div><div class="lbl">Участников</div></div>
-        <div class="stat"><div class="val" id="aWallets">0</div><div class="lbl">Кошельков</div></div>
-        <div class="stat"><div class="val" id="aOpen">1</div><div class="lbl">Столов</div></div>
-        <div class="stat"><div class="val" id="aVolume">0</div><div class="lbl">Оборот</div></div>
-        <div class="stat"><div class="val" id="aPayout">0</div><div class="lbl">Выплачено</div></div>
-      </div>
-
-      <div class="tables-grid" id="aTables"></div>
-
-      <div class="admin-grid">
-        <div class="panel">
-          <h2>Стол <span id="aTableTitle">1</span></h2>
-          <div class="levels" id="aLevels"></div>
-          <div class="admin-actions">
-            <button class="btn btn-sec" id="aAdd5" type="button">+5 случайных кошельков</button>
-          </div>
-        </div>
-        <div class="panel">
-          <h2>Покупки</h2>
-          <div class="scroll">
-            <table class="data">
-              <thead><tr><th>ID</th><th>Кошелёк</th><th>Стол</th><th>Ур</th><th>Внёс</th><th>Получил</th></tr></thead>
-              <tbody id="aAllBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
       <div class="panel">
-        <h2>Кошельки</h2>
-        <div class="scroll">
-          <table class="data">
-            <thead><tr><th>Адрес</th><th>Баланс</th><th>Покупок</th></tr></thead>
-            <tbody id="aWalletBody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2>Реестр автовыплат</h2>
-        <div class="scroll log-scroll" id="aLog"></div>
+        <h2>Админ-панель</h2>
+        <p class="muted">Функции администратора недоступны в блокчейн версии. Управление контрактом осуществляется через смарт-контракт на Arbitrum.</p>
       </div>
     </section>
   </main>
 
   <footer class="site-footer">
-    <div>STOLY · внутренние зачисления на адрес кошелька</div>
+    <div>STOLY · выплаты в блокчейне на Arbitrum</div>
     <div><a href="#/rules">Правила</a></div>
   </footer>
 
   <div class="modal-overlay hidden" id="walletModal" role="dialog" aria-modal="true" aria-labelledby="walletModalTitle">
     <div class="modal">
       <div class="modal-head">
-        <h2 id="walletModalTitle">Подключить кошелёк</h2>
+        <h2 id="walletModalTitle">Подключить кошелёк на Arbitrum</h2>
         <button class="modal-close" id="walletModalClose" type="button" aria-label="Закрыть">×</button>
       </div>
-      <p class="modal-hint">Выберите установленный кошелёк. Запросим только адрес — на него будут приходить выплаты.</p>
+      <p class="modal-hint">Выберите установленный кошелёк. Убедитесь, что вы на сети Arbitrum Sepolia или Arbitrum One. Запросим подтверждение подключения.</p>
       <div class="wallet-list" id="walletList"></div>
       <p class="modal-foot" id="walletModalFoot"></p>
     </div>
   </div>
   <div class="toast" id="toast"></div>
-  <script src="js/app.js"></script>
+  <script type="module" src="js/app.js"></script>
 </body>
 </html>
