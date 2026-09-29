@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>STOLY — залы и автозачисления на кошелёк</title>
+  <meta name="description" content="Подключите криптокошелёк, займите место за столом. Выплаты зачисляются на адрес вашего кошелька автоматически." />
+  <meta name="theme-color" content="#070b14" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="site.webmanifest" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <a class="skip" href="#main">К содержимому</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="#/" id="brandLink">
+        <img src="favicon.svg" alt="" width="32" height="32" />
+        <span>STOLY</span>
+      </a>
+      <nav class="main-nav" aria-label="Основное">
+        <a href="#/" data-route="home">Главная</a>
+        <a href="#/app" data-route="user">Залы</a>
+        <a href="#/cabinet" data-route="cabinet">Кабинет</a>
+        <a href="#/rules" data-route="rules">Правила</a>
+        <a href="#/admin" data-route="admin">Админ</a>
+      </nav>
+      <div class="header-actions">
+        <span id="adminLabel" class="pill hidden">Админ</span>
+        <button class="nav-btn hidden" id="logoutBtn" type="button">Выйти</button>
+        <button class="btn btn-wallet btn-sm" id="headerConnect" type="button">Кошелёк</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="screen" id="screenHome">
+      <div class="hero">
+        <p class="eyebrow">Продукт готов к запуску · кошелёк настоящий</p>
+        <h1>Залы с автозачислением на ваш криптокошелёк</h1>
+        <p class="lead">Подключите MetaMask или другой кошелёк, купите место за столом. Когда за стол заходят следующие участники, доля сразу падает на адрес вашего кошелька — без заявок и ручных выплат.</p>
+        <div class="hero-cta">
+          <a class="btn btn-buy" href="#/app">Открыть залы</a>
+          <a class="btn btn-sec" href="#/rules">Как это работает</a>
+        </div>
+        <ul class="hero-points">
+          <li>EIP-6963: MetaMask, Rabby, Coinbase Wallet</li>
+          <li>Один адрес — одна покупка на стол</li>
+          <li>Выплаты мгновенно на тот же адрес</li>
+        </ul>
+      </div>
+      <div class="home-grid">
+        <article class="panel">
+          <h2>1. Кошелёк</h2>
+          <p class="muted">Сайт запрашивает только адрес. Это ваш идентификатор и реквизиты для зачислений.</p>
+        </article>
+        <article class="panel">
+          <h2>2. Стол</h2>
+          <p class="muted">Открытые залы принимают покупку с внутреннего баланса, привязанного к адресу.</p>
+        </article>
+        <article class="panel">
+          <h2>3. Автовыплата</h2>
+          <p class="muted">Сумма покупки делится между теми, кто зашёл раньше на этом столе, и сразу числится на их адресах.</p>
+        </article>
+      </div>
+      <div class="panel notice">
+        <strong>Важно.</strong> Подключение кошелька — настоящее. Движение средств внутри продукта — внутренние зачисления на адрес (не перевод ETH/USDT в сети). Это не инвестиционное предложение.
+      </div>
+    </section>
+
+    <section class="screen" id="screenUser">
+      <div class="wallet-bar" id="walletBar">
+        <div id="walletInfo" class="off">Кошелёк не подключён</div>
+        <div class="wallet-actions">
+          <button class="btn btn-wallet" id="connectBtn" type="button">Подключить кошелёк</button>
+          <button class="btn btn-sec hidden" id="disconnectBtn" type="button">Отключить</button>
+        </div>
+      </div>
+
+      <div class="stats-bar">
+        <div class="stat"><div class="val" id="uBuys">0</div><div class="lbl">Покупок</div></div>
+        <div class="stat"><div class="val" id="uLevel">1</div><div class="lbl">Уровень</div></div>
+        <div class="stat"><div class="val" id="uMelons">0</div><div class="lbl">Оборот</div></div>
+        <div class="stat"><div class="val" id="uPaid">0</div><div class="lbl">Выплачено</div></div>
+      </div>
+
+      <div class="tables-grid" id="uTables"></div>
+
+      <div class="panel">
+        <h2>Стол <span id="uTableTitle">1</span> <span class="badge" id="uBadge">открыт</span></h2>
+        <div class="levels" id="uLevels"></div>
+        <div class="buy-form" id="uBuyForm">
+          <div class="price-tag" id="uPrice">= 100</div>
+          <button class="btn btn-buy" id="uBuyBtn" type="button">Купить место</button>
+        </div>
+        <div class="flow-box">
+          Покупка списывается с баланса адреса. Доля автоматически зачисляется на кошельки участников более раннего уровня этого стола. История — в кабинете.
+        </div>
+        <div class="plist">
+          <h3>Участники стола</h3>
+          <div class="plist-items" id="uList"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="screenCabinet">
+      <div class="panel">
+        <h2>Кабинет</h2>
+        <p class="muted" id="cabWallet">Подключите кошелёк, чтобы видеть баланс и выплаты на ваш адрес.</p>
+        <div class="stats-bar cab-stats">
+          <div class="stat"><div class="val" id="cabBal">—</div><div class="lbl">Баланс адреса</div></div>
+          <div class="stat"><div class="val" id="cabIn">—</div><div class="lbl">Получено выплат</div></div>
+          <div class="stat"><div class="val" id="cabOut">—</div><div class="lbl">Потрачено на столы</div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Автозачисления на кошелёк</h2>
+        <p class="muted">Каждая выплата сразу попадает на адрес получателя, без подтверждения с вашей стороны.</p>
+        <div class="scroll">
+          <table class="data">
+            <thead>
+              <tr><th>Когда</th><th>Стол</th><th>От</th><th>Сумма</th><th>Статус</th></tr>
+            </thead>
+            <tbody id="cabPayouts"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Мои места</h2>
+        <div class="scroll">
+          <table class="data">
+            <thead>
+              <tr><th>Стол</th><th>Ур</th><th>Внёс</th><th>Получил</th></tr>
+            </thead>
+            <tbody id="cabBuys"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="screenRules">
+      <div class="panel prose">
+        <h2>Правила</h2>
+        <ol>
+          <li>Участник определяется адресом подключённого кошелька.</li>
+          <li>Один адрес может купить каждый стол только один раз.</li>
+          <li>Цена стола фиксирована. Списание идёт с внутреннего баланса адреса.</li>
+          <li>При покупке сумма автоматически распределяется между участниками более раннего уровня того же стола и зачисляется на их адреса.</li>
+          <li>Если ранних участников нет, сумма остаётся в обороте стола без персональных выплат.</li>
+          <li>Новые столы открываются по расписанию или админом.</li>
+        </ol>
+        <h2>Статус продукта</h2>
+        <p>Интерфейс, кошельки и автозачисления на адрес готовы к использованию. Переводы ETH, USDT и других токенов в блокчейне не выполняются: это внутренний реестр на тот же адрес, что у кошелька.</p>
+      </div>
+    </section>
+
+    <section class="screen" id="screenLogin">
+      <div class="login-box">
+        <h2>Вход админа</h2>
+        <p class="hint">Логин <strong>admin</strong> · пароль <strong>admin123</strong></p>
+        <div class="err" id="loginErr"></div>
+        <label for="loginUser">Логин</label>
+        <input type="text" id="loginUser" value="admin" autocomplete="username" />
+        <label for="loginPass">Пароль</label>
+        <input type="password" id="loginPass" placeholder="••••••••" autocomplete="current-password" />
+        <button class="btn btn-orange btn-block" id="loginBtn" type="button">Войти</button>
+      </div>
+    </section>
+
+    <section class="screen" id="screenAdmin">
+      <div class="speed-bar">
+        <span>Время:</span>
+        <button type="button" data-speed="1" class="on">1×</button>
+        <button type="button" data-speed="60">1м=1ч</button>
+        <button type="button" data-speed="3600">1с=1ч</button>
+        <button type="button" class="btn btn-sec" id="aOpenT2">Открыть стол 2</button>
+        <button type="button" class="btn btn-sec" id="aExport">Экспорт JSON</button>
+        <button type="button" class="btn btn-danger" id="aReset">Сброс БД</button>
+      </div>
+
+      <div class="stats-bar">
+        <div class="stat"><div class="val" id="aTotal">0</div><div class="lbl">Участников</div></div>
+        <div class="stat"><div class="val" id="aWallets">0</div><div class="lbl">Кошельков</div></div>
+        <div class="stat"><div class="val" id="aOpen">1</div><div class="lbl">Столов</div></div>
+        <div class="stat"><div class="val" id="aVolume">0</div><div class="lbl">Оборот</div></div>
+        <div class="stat"><div class="val" id="aPayout">0</div><div class="lbl">Выплачено</div></div>
+      </div>
+
+      <div class="tables-grid" id="aTables"></div>
+
+      <div class="admin-grid">
+        <div class="panel">
+          <h2>Стол <span id="aTableTitle">1</span></h2>
+          <div class="levels" id="aLevels"></div>
+          <div class="admin-actions">
+            <button class="btn btn-sec" id="aAdd5" type="button">+5 случайных кошельков</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Покупки</h2>
+          <div class="scroll">
+            <table class="data">
+              <thead><tr><th>ID</th><th>Кошелёк</th><th>Стол</th><th>Ур</th><th>Внёс</th><th>Получил</th></tr></thead>
+              <tbody id="aAllBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Кошельки</h2>
+        <div class="scroll">
+          <table class="data">
+            <thead><tr><th>Адрес</th><th>Баланс</th><th>Покупок</th></tr></thead>
+            <tbody id="aWalletBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Реестр автовыплат</h2>
+        <div class="scroll log-scroll" id="aLog"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div>STOLY · внутренние зачисления на адрес кошелька</div>
+    <div><a href="#/rules">Правила</a></div>
+  </footer>
+
+  <div class="modal-overlay hidden" id="walletModal" role="dialog" aria-modal="true" aria-labelledby="walletModalTitle">
+    <div class="modal">
+      <div class="modal-head">
+        <h2 id="walletModalTitle">Подключить кошелёк</h2>
+        <button class="modal-close" id="walletModalClose" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <p class="modal-hint">Выберите установленный кошелёк. Запросим только адрес — на него будут приходить выплаты.</p>
+      <div class="wallet-list" id="walletList"></div>
+      <p class="modal-foot" id="walletModalFoot"></p>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="js/app.js"></script>
+</body>
+</html>

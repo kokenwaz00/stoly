@@ -1,0 +1,9 @@
+{
+  "name": "stoly",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Учебная симуляция столов (арбузы)",
+  "scripts": {
+    "dev": "npx --yes serve . -p 5173"
+  }
+}

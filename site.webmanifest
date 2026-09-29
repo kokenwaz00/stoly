@@ -1,0 +1,10 @@
+{
+  "name": "STOLY",
+  "short_name": "STOLY",
+  "description": "Залы, уровни и автозачисления на адрес подключённого кошелька.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
