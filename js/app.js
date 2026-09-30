@@ -118,7 +118,7 @@ function escapeHtml(s) {
 }
 
 function formatCountdown(ms) {
-  if (ms <= 0) return "Стол открыт";
+  if (ms <= 0) return "Открыт";
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -131,23 +131,22 @@ async function connectWithProvider(wallet) {
   try {
     const eth = wallet.provider;
     const accounts = await eth.request({ method: "eth_requestAccounts" });
-    
+
     if (!accounts || !accounts.length) throw new Error("Кошелёк не вернул адрес");
-    
-    // Check network
+
     const chainId = await eth.request({ method: "eth_chainId" });
     const chainIdNum = parseInt(chainId, 16);
-    
+
     if (chainIdNum !== ARBITRUM_SEPOLIA_CHAIN_ID && chainIdNum !== ARBITRUM_MAINNET_CHAIN_ID) {
       toast("Пожалуйста, переключитесь на Arbitrum");
       return;
     }
-    
+
     provider = new ethers.BrowserProvider(eth);
     signer = await provider.getSigner();
     stolyContract = new ethers.Contract(STOLY_CONTRACT_ADDRESS, STOLY_ABI, signer);
     usdtContract = new ethers.Contract(USDT_TOKEN_ADDRESS, USDT_ABI, signer);
-    
+
     setConnectedAccount(accounts[0], wallet.info.name);
     closeWalletModal();
     toast("Подключён " + wallet.info.name);
@@ -179,7 +178,7 @@ function disconnectWallet(silent) {
 async function restoreWallet() {
   const saved = localStorage.getItem("stoly_connected_wallet");
   if (!saved || !provider) return;
-  
+
   try {
     const accounts = await provider.listAccounts();
     const match = accounts.find((a) => a.address.toLowerCase() === saved.toLowerCase());
@@ -201,7 +200,7 @@ function openWalletModal() {
   const foot = document.getElementById("walletModalFoot");
   const wallets = listAvailableWallets();
   list.innerHTML = "";
-  
+
   if (!wallets.length) {
     list.innerHTML = '<p class="empty-p">В этом браузере нет установленного кошелька.</p>';
     foot.innerHTML = WALLET_INSTALL.map((w) =>
@@ -256,10 +255,8 @@ async function buy(tableId) {
 
   try {
     const price = TABLE_PRICE[tableId] || "100000000";
-    
-    // Check allowance
     const allowance = await usdtContract.allowance(connectedWallet, STOLY_CONTRACT_ADDRESS);
-    
+
     if (allowance < BigInt(price)) {
       toast("Подтверждаю расход USDT...");
       const approveTx = await usdtContract.approve(STOLY_CONTRACT_ADDRESS, BigInt(price) * BigInt(10));
@@ -270,7 +267,7 @@ async function buy(tableId) {
     toast("Отправляю транзакцию покупки...");
     const buyTx = await stolyContract.buy(tableId);
     const receipt = await buyTx.wait();
-    
+
     if (receipt && receipt.status === 1) {
       toast("Покупка успешна! Выплаты отправлены участникам");
       await renderAll();
@@ -297,7 +294,7 @@ async function claim() {
     toast("Забираю выплаты...");
     const claimTx = await stolyContract.claim();
     const receipt = await claimTx.wait();
-    
+
     if (receipt && receipt.status === 1) {
       toast("Выплаты получены!");
       await renderAll();
@@ -318,34 +315,33 @@ async function claim() {
 function renderTables(containerId, clickable) {
   const grid = document.getElementById(containerId);
   grid.innerHTML = "";
-  
+
   for (let i = 1; i <= TOTAL_TABLES; i++) {
     const btn = document.createElement("div");
     let cls = "table-btn";
-    
-    // Only table 1 is open, table 2 has timer
+
     const isOpen = i === 1;
     const isComingSoon = i === 2;
-    
+
     if (isOpen) cls += " open";
     else if (isComingSoon) cls += " soon";
     else cls += " locked";
-    
+
     if (i === activeTable) cls += " active";
-    
+
     btn.className = cls;
-    
+
     let status = isOpen ? "открыт" : isComingSoon ? "скоро" : "закрыт";
     let extra = "";
     if (isComingSoon) {
       extra = '<div class="t-timer">' + formatCountdown(TABLE_2_OPEN_TIME * 1000 - Date.now()) + "</div>";
     }
-    
+
     btn.innerHTML =
       '<div class="t-num">Стол ' + i + "</div>" +
       '<div class="t-status">' + status + "</div>" + extra +
       (isOpen || isComingSoon ? '<div class="t-price">' + (TABLE_PRICE[i] ? parseInt(TABLE_PRICE[i]) / 1e6 : i * 100) + " USDT</div>" : "");
-    
+
     if ((isOpen || isComingSoon) && clickable) {
       btn.style.cursor = "pointer";
       btn.addEventListener("click", () => {
@@ -362,46 +358,42 @@ function renderTables(containerId, clickable) {
 async function renderLevels(id) {
   const list = document.getElementById(id);
   list.innerHTML = "";
-  
+
   if (!stolyContract) {
     list.innerHTML = '<p class="empty-p">Контракт не инициализирован</p>';
     return;
   }
 
   try {
-    const buyCount = await stolyContract.getPurchasesCount(activeTable);
-    const currentLvl = await stolyContract.currentLevel(activeTable);
-    
+    const buyCount = Number(await stolyContract.getPurchasesCount(activeTable));
+    const currentLvl = Number(await stolyContract.currentLevel(activeTable));
+
     for (let i = 0; i < 5; i++) {
       const lvl = i + 1;
       let cls = "level";
       if (lvl < currentLvl) cls += " done";
       else if (lvl === currentLvl) cls += " current";
       else cls += " locked";
-      
+
       let req = "";
       let bar = "";
-      
-      if (lvl === 1) {
-        req = "Вход · 0 участников";
+
+      if (lvl === currentLvl && currentLvl < 5) {
+        const nextGoal = LEVEL_THRESHOLDS[currentLvl];
+        const need = Math.max(0, nextGoal - buyCount);
+        const pct = Math.min(100, Math.round((buyCount / nextGoal) * 100 || 0));
+        req = need > 0 ? "До следующего уровня: " + need + " покупок" : "Следующий уровень открыт";
+        bar = '<div class="bar-bg"><div class="bar-fill" style="width:' + pct + '%"></div></div>';
+      } else if (lvl < currentLvl) {
+        req = "Переход выполнен";
+        bar = '<div class="bar-bg"><div class="bar-fill" style="width:100%"></div></div>';
+      } else if (lvl === 5) {
+        req = "Топ-уровень";
       } else {
-        const threshold = LEVEL_THRESHOLDS[i];
-        if (lvl === currentLvl && currentLvl < 5) {
-          const prev = LEVEL_THRESHOLDS[lvl - 1];
-          const next = LEVEL_THRESHOLDS[lvl];
-          const inLevel = buyCount - prev;
-          const need = next - prev;
-          const pct = Math.min(100, Math.round((inLevel / need) * 100));
-          req = "Прогресс: " + inLevel + " / " + need;
-          bar = '<div class="bar-bg"><div class="bar-fill" style="width:' + pct + '%"></div></div>';
-        } else if (lvl < currentLvl) {
-          req = "Завершено · " + threshold + "+ участников";
-          bar = '<div class="bar-bg"><div class="bar-fill" style="width:100%"></div></div>';
-        } else {
-          req = "Нужно " + threshold + "+ участников";
-        }
+        const need = LEVEL_THRESHOLDS[lvl] - buyCount;
+        req = need > 0 ? "Нужно " + need + " до следующего уровня" : "Следующий уровень уже рядом";
       }
-      
+
       const el = document.createElement("div");
       el.className = cls;
       el.innerHTML =
@@ -417,7 +409,7 @@ async function renderLevels(id) {
 
 async function renderPlist(id) {
   const box = document.getElementById(id);
-  
+
   if (!stolyContract) {
     box.innerHTML = '<span class="empty-p">Контракт не инициализирован</span>';
     return;
@@ -429,9 +421,9 @@ async function renderPlist(id) {
       box.innerHTML = '<span class="empty-p">Никого нет</span>';
       return;
     }
-    
+
     box.innerHTML = list.map((p) => {
-      const net = (parseInt(p[5]) - parseInt(p[4])); // received - fee
+      const net = (parseInt(p[5]) - parseInt(p[4]));
       return (
         '<div class="pchip"><div class="pn">' + shortAddr(p[1]) +
         '</div><div class="pm">ур.' + p[3] + " · −" + (parseInt(p[4]) / 1e6) +
@@ -449,7 +441,7 @@ function renderWalletBar() {
   const info = document.getElementById("walletInfo");
   const conn = document.getElementById("connectBtn");
   const disc = document.getElementById("disconnectBtn");
-  
+
   if (connectedWallet) {
     info.className = "";
     info.innerHTML =
@@ -491,7 +483,7 @@ async function renderCabinet() {
   renderWalletBar();
   const wEl = document.getElementById("cabWallet");
   const emptyRow = '<tr><td colspan="4" style="color:var(--muted)">Пока пусто</td></tr>';
-  
+
   if (!connectedWallet || !stolyContract) {
     wEl.textContent = "Подключите кошелёк, чтобы видеть выплаты.";
     document.getElementById("cabPayouts").innerHTML = emptyRow;
@@ -501,24 +493,17 @@ async function renderCabinet() {
   try {
     const claimable = await stolyContract.claimableBalance(connectedWallet);
     const allPayouts = await stolyContract.getPayouts();
-    
     const mine = allPayouts.filter((p) => p[1].toLowerCase() === connectedWallet.toLowerCase());
-    
-    let incoming = BigInt(0);
-    mine.forEach((p) => {
-      incoming += BigInt(p[4]);
-    });
 
-    wEl.innerHTML = "Адрес кошелька: <span class=\"addr\">" + escapeHtml(connectedWallet) + "</span>";
-    
+    wEl.innerHTML = 'Выплаты на адрес <span class="addr">' + escapeHtml(connectedWallet) + "</span>";
+
     document.getElementById("cabPayouts").innerHTML = mine.length
       ? mine.map((p) => {
         const date = new Date(parseInt(p[5]) * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "medium" });
         return "<tr><td>" + date + "</td><td>Стол " + p[3] + "</td><td>+" + (parseInt(p[4]) / 1e6).toFixed(2) + " USDT</td><td class=\"status-ok\">" + (p[6] ? "получено" : "ожидает") + "</td></tr>";
       }).join("")
       : emptyRow;
-    
-    // Button to claim
+
     if (claimable > BigInt(0)) {
       const claimBtn = document.createElement("button");
       claimBtn.className = "btn btn-buy";
@@ -532,7 +517,7 @@ async function renderCabinet() {
       if (oldBtn) oldBtn.remove();
       container.appendChild(claimBtn);
     }
-    
+
   } catch (err) {
     console.error("Error rendering cabinet:", err);
     wEl.textContent = "Ошибка загрузки данных";
@@ -544,24 +529,25 @@ async function renderUser() {
   renderTables("uTables", true);
   await renderLevels("uLevels");
   await renderPlist("uList");
-  
+
   if (stolyContract) {
     try {
       const buyCount = await stolyContract.getPurchasesCount(activeTable);
       const currentLvl = await stolyContract.currentLevel(activeTable);
       const price = TABLE_PRICE[activeTable] || "100000000";
-      
+
       document.getElementById("uBuys").textContent = buyCount;
       document.getElementById("uLevel").textContent = currentLvl;
       document.getElementById("uMelons").textContent = (buyCount * parseInt(price) / 1e6).toFixed(2) + " USDT";
       document.getElementById("uTableTitle").textContent = activeTable;
       document.getElementById("uPrice").textContent = (parseInt(price) / 1e6) + " USDT";
-      
+
       const isOpen = activeTable === 1;
-      document.getElementById("uBadge").textContent = isOpen ? "открыт" : "скоро";
-      document.getElementById("uBadge").className = "badge" + (isOpen ? "" : " wait");
+      const isSoon = activeTable === 2;
+      document.getElementById("uBadge").textContent = isOpen ? "открыт" : isSoon ? "скоро" : "закрыт";
+      document.getElementById("uBadge").className = "badge" + (isOpen ? "" : isSoon ? " wait" : " wait");
       document.getElementById("uBuyForm").style.display = isOpen ? "flex" : "none";
-      document.getElementById("uBuyBtn").disabled = !connectedWallet;
+      document.getElementById("uBuyBtn").disabled = !connectedWallet || !isOpen;
     } catch (err) {
       console.error("Error in renderUser:", err);
     }
@@ -588,18 +574,6 @@ function routeFromHash() {
 function applyRoute() {
   showScreen(routeFromHash());
   renderAll();
-}
-
-// Admin functions
-function checkAdminAccess() {
-  const key = "stoly_admin_access_" + Date.now();
-  if (connectedWallet) {
-    const walletKey = "stoly_admin_" + connectedWallet;
-    if (localStorage.getItem(walletKey)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // Event listeners
@@ -653,7 +627,6 @@ document.getElementById("uBuyBtn").addEventListener("click", () => {
   buy(activeTable);
 });
 
-// Timer update
 setInterval(() => {
   if (mode === "user" || mode === "admin") {
     const timerEl = document.querySelector(".t-timer");
@@ -666,7 +639,6 @@ setInterval(() => {
 
 window.addEventListener("hashchange", applyRoute);
 
-// Initialize on load
 window.addEventListener("load", async () => {
   if (initializeWeb3()) {
     await restoreWallet();
