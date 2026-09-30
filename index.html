@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>STOLY — залы с выплатами на Arbitrum</title>
-  <meta name="description" content="Подключите крипто-кошелёк на Arbitrum, купите USDT место за столом. Выплаты зачисляются мгновенно на ваш адрес в блокчейне." />
-  <meta name="theme-color" content="#070b14" />
+  <title>STOLY — система роста с выплатами на Arbitrum</title>
+  <meta name="description" content="Купи вход в систему столов. Переходишь на новый уровень — получаешь выплату. Реальные USDT на Arbitrum." />
+  <meta name="theme-color" content="#080d17" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="manifest" href="site.webmanifest" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -38,36 +38,41 @@
     <section class="screen" id="screenHome">
       <div class="hero">
         <p class="eyebrow">На Arbitrum · реальные USDT выплаты</p>
-        <h1>Залы с автоматическими выплатами в блокчейне</h1>
-        <p class="lead">Подключите MetaMask или другой кошелёк на Arbitrum, купите место за столом за 100 USDT. Когда за стол заходят участники более высокого уровня, выплаты мгновенно поступают на ваш адрес.</p>
+        <h1>Купи вход. Поднимись на уровень. Получи выплату.</h1>
+        <p class="lead">
+          Система работает через рост уровней. Ты входишь в стол, платишь фиксированную цену, и получаешь право на выплаты, 
+          когда система продвигается дальше. Это честная схема, но с реальными финансовыми рисками.
+        </p>
         <div class="hero-cta">
-          <a class="btn btn-buy" href="#/app">Открыть залы</a>
+          <a class="btn btn-buy" href="#/app">Начать сейчас</a>
           <a class="btn btn-sec" href="#/rules">Как это работает</a>
         </div>
         <ul class="hero-points">
-          <li>EIP-6963: MetaMask, Rabby, Coinbase Wallet</li>
-          <li>Arbitrum Sepolia / Arbitrum One</li>
-          <li>Реальные транзакции USDT в блокчейне</li>
-          <li>Один адрес — одна покупка на стол</li>
-          <li>Выплаты мгновенно на адрес кошелька</li>
+          <li>🔓 Только первый зал открыт</li>
+          <li>⏰ Второй зал запускается через 24 часа</li>
+          <li>📈 5 уровней с растущими выплатами</li>
+          <li>⚡ Выплаты в блокчейне мгновенно</li>
+          <li>⚠️ Финансовые риски — реальные</li>
         </ul>
       </div>
+
       <div class="home-grid">
         <article class="panel">
-          <h2>1. Кошелёк на Arbitrum</h2>
-          <p class="muted">Подключите MetaMask или другой кошелёк. Убедитесь, что вы на сети Arbitrum Sepolia или Arbitrum One.</p>
+          <h2>1️⃣ Вход в систему</h2>
+          <p class="muted">Подключи кошелёк на Arbitrum и купи первое место. Это твой вход на 1-й уровень.</p>
         </article>
         <article class="panel">
-          <h2>2. Купить место</h2>
-          <p class="muted">Первый стол стоит 100 USDT. Одобрите расход USDT и отправьте транзакцию покупки в блокчейн.</p>
+          <h2>2️⃣ Рост по уровням</h2>
+          <p class="muted">С увеличением участников ты поднимаешься на новые уровни. Каждый уровень — это выплата для тех, кто был до тебя.</p>
         </article>
         <article class="panel">
-          <h2>3. Получить выплату</h2>
-          <p class="muted">Когда участник более высокого уровня купит место, 100 USDT делятся поровну между всеми участниками предыдущих уровней. Выплаты зачисляются автоматически.</p>
+          <h2>3️⃣ Получи свою долю</h2>
+          <p class="muted">Когда новый участник входит на уровень выше твоего, ты получаешь выплату в свой кошелёк. Автоматически.</p>
         </article>
       </div>
+
       <div class="panel notice">
-        <strong>Важно.</strong> Это финансовая система с риском. Вы можете потерять свои средства. Убедитесь, что понимаете механику работы перед инвестированием. Используйте только USDT, которые готовы потерять.
+        <strong>⚠️ Важно:</strong> Это финансовая система с риском потери средств. Новые участники платят предыдущим. Если люди перестанут входить, система остановится, и ты не получишь обратно свои деньги. Не вкладывай то, что не готов потерять.
       </div>
     </section>
 
@@ -83,8 +88,7 @@
       <div class="stats-bar">
         <div class="stat"><div class="val" id="uBuys">0</div><div class="lbl">Покупок на столе</div></div>
         <div class="stat"><div class="val" id="uLevel">1</div><div class="lbl">Текущий уровень</div></div>
-        <div class="stat"><div class="val" id="uMelons">0</div><div class="lbl">Оборот (USDT)</div></div>
-        <div class="stat"><div class="val" id="uPaid">—</div><div class="lbl">Выплачено</div></div>
+        <div class="stat"><div class="val" id="uMelons">0</div><div class="lbl">Всего оборот (USDT)</div></div>
       </div>
 
       <div class="tables-grid" id="uTables"></div>
@@ -94,13 +98,14 @@
         <div class="levels" id="uLevels"></div>
         <div class="buy-form" id="uBuyForm">
           <div class="price-tag" id="uPrice">= 100 USDT</div>
-          <button class="btn btn-buy" id="uBuyBtn" type="button">Купить место</button>
+          <button class="btn btn-buy" id="uBuyBtn" type="button">💰 Купить место</button>
         </div>
         <div class="flow-box">
-          Покупка за 100 USDT отправляется в смарт-контракт на Arbitrum. Доля автоматически распределяется на кошельки всех участников более ранних уровней этого же стола.
+          Твоя покупка за 100 USDT отправляется в смарт-контракт на Arbitrum. Доля автоматически распределяется между 
+          всеми участниками предыдущих уровней поровну. Никакого дельца — только блокчейн.
         </div>
         <div class="plist">
-          <h3>Участники стола</h3>
+          <h3>📊 Участники этого уровня</h3>
           <div class="plist-items" id="uList"></div>
         </div>
       </div>
@@ -108,21 +113,17 @@
 
     <section class="screen" id="screenCabinet">
       <div class="panel">
-        <h2>Кабинет</h2>
-        <p class="muted" id="cabWallet">Подключите кошелёк на Arbitrum, чтобы видеть баланс и выплаты.</p>
-        <div class="stats-bar cab-stats">
-          <div class="stat"><div class="val" id="cabBal">—</div><div class="lbl">Баланс USDT</div></div>
-          <div class="stat"><div class="val" id="cabIn">—</div><div class="lbl">Получено выплат (USDT)</div></div>
-          <div class="stat"><div class="val" id="cabOut">—</div><div class="lbl">Потрачено</div></div>
-        </div>
+        <h2>💰 Кабинет</h2>
+        <p class="muted" id="cabWallet">Подключите кошелёк на Arbitrum, чтобы видеть выплаты.</p>
       </div>
+
       <div class="panel">
-        <h2>Выплаты в блокчейне</h2>
-        <p class="muted">Каждая выплата записана в смарт-контракте и готова к получению. Нажмите кнопку ниже, чтобы забрать все доступные выплаты.</p>
+        <h2>📈 Твои выплаты</h2>
+        <p class="muted">Каждая выплата записана в смарт-контракте. Забери доступную сумму нажатием кнопки.</p>
         <div class="scroll">
           <table class="data">
             <thead>
-              <tr><th>Когда</th><th>Стол</th><th>От кого</th><th>Сумма (USDT)</th><th>Статус</th></tr>
+              <tr><th>Когда</th><th>Стол</th><th>Сумма (USDT)</th><th>Статус</th></tr>
             </thead>
             <tbody id="cabPayouts"></tbody>
           </table>
@@ -132,34 +133,65 @@
 
     <section class="screen" id="screenRules">
       <div class="panel prose">
-        <h2>Как это работает</h2>
-        <ol>
-          <li><strong>Уровни:</strong> Каждый стол имеет 5 уровней. Каждый новый участник входит на текущий уровень.</li>
-          <li><strong>Цена:</strong> Первый стол стоит 100 USDT. Один адрес может купить каждый стол только один раз.</li>
-          <li><strong>Уровни сложности:</strong>
-            <ul>
-              <li>Уровень 1: вход (0 покупок)</li>
-              <li>Уровень 2: 5 покупок</li>
-              <li>Уровень 3: 15 покупок</li>
-              <li>Уровень 4: 35 покупок</li>
-              <li>Уровень 5: 70 покупок</li>
-            </ul>
-          </li>
-          <li><strong>Выплаты:</strong> Когда новый участник покупает место на любом уровне выше первого, его платёж делится поровну между всеми участниками всех предыдущих уровней этого же стола. Выплаты автоматически поступают в смарт-контракт.</li>
-          <li><strong>Получение выплат:</strong> Вы можете забрать свои выплаты в любой момент. Нажмите кнопку "Забрать выплаты" в кабинете.</li>
-          <li><strong>Блокчейн:</strong> Все транзакции записаны в Arbitrum. Выплаты безвозвратны и необратимы.</li>
-        </ol>
-        <h2>Риск</h2>
-        <p>Это финансовая схема с высоким риском. Новые участники платят предыдущим. Если количество новых участников прекратится, выплаты прекратятся. Вы можете потерять все вложенные средства. Используйте только USDT, которые вы готовы потерять полностью.</p>
-        <h2>Статус продукта</h2>
-        <p>Смарт-контракт развёрнут на Arbitrum Sepolia для тестирования. Готов к использованию на Arbitrum One с реальными средствами (на ваш риск и ответственность).</p>
+        <h2>Как система работает</h2>
+        
+        <h3>Уровни и рост</h3>
+        <p>На каждом столе <strong>5 уровней</strong>. Каждый новый участник входит на текущий уровень системы. Когда на уровне накопится достаточно покупок, система переходит на следующий уровень.</p>
+
+        <h3>Пороги уровней</h3>
+        <ul>
+          <li><strong>Уровень 1:</strong> вход (0 покупок)</li>
+          <li><strong>Уровень 2:</strong> 5 покупок</li>
+          <li><strong>Уровень 3:</strong> 15 покупок</li>
+          <li><strong>Уровень 4:</strong> 35 покупок</li>
+          <li><strong>Уровень 5:</strong> 70 покупок</li>
+        </ul>
+
+        <h3>Как ты получаешь выплату</h3>
+        <p>
+          <strong>Когда ты переходишь на следующий уровень, ты получаешь выплату, если ранее купил место на предыдущем уровне.</strong>
+        </p>
+        <p>
+          Пример: Ты купил место на уровне 2. Когда система достигает уровня 3, включается выплата для всех участников уровня 2. 
+          Сумма распределяется поровну между всеми, кто купил на этом уровне.
+        </p>
+
+        <h3>Откуда берутся деньги для выплат?</h3>
+        <p>
+          Выплаты идут из платежей новых участников. Когда кто-то входит в систему после тебя и поднимается выше твоего уровня, 
+          его платёж распределяется между всеми, кто был до него. Это замкнутый круг: ты платишь, потом получаешь.
+        </p>
+
+        <h3>Получение выплат</h3>
+        <p>Забери доступные выплаты в любой момент. Нажми кнопку в кабинете, подтверди в кошельке, и деньги приходят на адрес.</p>
+
+        <h3>Все в блокчейне</h3>
+        <p>Каждая транзакция записана в Arbitrum. Выплаты необратимы. Ты видишь всё прямо в смарт-контракте.</p>
+
+        <h2>⚠️ Риск и честность</h2>
+        <p>
+          <strong>Это НЕ инвестиция. Это финансовая модель с риском.</strong>
+        </p>
+        <p>
+          Ты получаешь выплаты, только если после тебя входят новые люди. Если входы прекратятся, выплаты остановятся, 
+          и ты потеряешь деньги. Никто не гарантирует, что люди будут входить всегда.
+        </p>
+        <p>
+          <strong>Не вкладывай деньги, которые не готов потерять на 100%.</strong>
+        </p>
+
+        <h2>📱 Текущий статус</h2>
+        <p>
+          Первый зал открыт на Arbitrum Sepolia (тестнет). Второй зал откроется через 24 часа. 
+          Это альфа-версия для тестирования. Все может сломаться, все может потеряться.
+        </p>
       </div>
     </section>
 
     <section class="screen" id="screenLogin">
       <div class="login-box">
-        <h2>Вход админа</h2>
-        <p class="hint">Логин <strong>admin</strong> · пароль <strong>admin123</strong></p>
+        <h2>🔐 Админ вход</h2>
+        <p class="hint">Логин: <strong>admin</strong> · Пароль: <strong>admin123</strong></p>
         <div class="err" id="loginErr"></div>
         <label for="loginUser">Логин</label>
         <input type="text" id="loginUser" value="admin" autocomplete="username" />
@@ -171,24 +203,24 @@
 
     <section class="screen" id="screenAdmin">
       <div class="panel">
-        <h2>Админ-панель</h2>
-        <p class="muted">Функции администратора недоступны в блокчейн версии. Управление контрактом осуществляется через смарт-контракт на Arbitrum.</p>
+        <h2>🛠️ Админ-панель</h2>
+        <p class="muted">Функции администратора зависят от контракта. Управление осуществляется через блокчейн.</p>
       </div>
     </section>
   </main>
 
   <footer class="site-footer">
-    <div>STOLY · выплаты в блокчейне на Arbitrum</div>
+    <div>STOLY · система роста на Arbitrum</div>
     <div><a href="#/rules">Правила</a></div>
   </footer>
 
   <div class="modal-overlay hidden" id="walletModal" role="dialog" aria-modal="true" aria-labelledby="walletModalTitle">
     <div class="modal">
       <div class="modal-head">
-        <h2 id="walletModalTitle">Подключить кошелёк на Arbitrum</h2>
+        <h2 id="walletModalTitle">🔗 Подключить кошелёк на Arbitrum</h2>
         <button class="modal-close" id="walletModalClose" type="button" aria-label="Закрыть">×</button>
       </div>
-      <p class="modal-hint">Выберите установленный кошелёк. Убедитесь, что вы на сети Arbitrum Sepolia или Arbitrum One. Запросим подтверждение подключения.</p>
+      <p class="modal-hint">Выберите установленный кошелёк. Убедитесь, что вы на сети Arbitrum Sepolia или Arbitrum One.</p>
       <div class="wallet-list" id="walletList"></div>
       <p class="modal-foot" id="walletModalFoot"></p>
     </div>
