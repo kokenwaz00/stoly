@@ -14,6 +14,7 @@ const TABLE_PRICE = { 1: "100000000", 2: "200000000" }; // 6 decimals USDT
 const TOTAL_TABLES = 10;
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "admin123";
+const TABLE_2_OPEN_TIME = Math.floor(Date.now() / 1000) + 24 * 60 * 60; // 24 hours
 
 // Contract ABI (simplified)
 const STOLY_ABI = [
@@ -114,6 +115,15 @@ function escapeHtml(s) {
   const d = document.createElement("div");
   d.textContent = s;
   return d.innerHTML;
+}
+
+function formatCountdown(ms) {
+  if (ms <= 0) return "Стол открыт";
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return [h, m, sec].map((x) => String(x).padStart(2, "0")).join(":");
 }
 
 // Wallet connection
@@ -313,21 +323,36 @@ function renderTables(containerId, clickable) {
     const btn = document.createElement("div");
     let cls = "table-btn";
     
-    // In blockchain version, all tables are accessible (open status depends on contract)
-    cls += " open";
+    // Only table 1 is open, table 2 has timer
+    const isOpen = i === 1;
+    const isComingSoon = i === 2;
+    
+    if (isOpen) cls += " open";
+    else if (isComingSoon) cls += " soon";
+    else cls += " locked";
+    
     if (i === activeTable) cls += " active";
     
     btn.className = cls;
+    
+    let status = isOpen ? "открыт" : isComingSoon ? "скоро" : "закрыт";
+    let extra = "";
+    if (isComingSoon) {
+      extra = '<div class="t-timer">' + formatCountdown(TABLE_2_OPEN_TIME * 1000 - Date.now()) + "</div>";
+    }
+    
     btn.innerHTML =
       '<div class="t-num">Стол ' + i + "</div>" +
-      '<div class="t-status">открыт</div>' +
-      '<div class="t-price">' + (TABLE_PRICE[i] ? TABLE_PRICE[i] / 1e6 : i * 100) + " USDT</div>";
+      '<div class="t-status">' + status + "</div>" + extra +
+      (isOpen || isComingSoon ? '<div class="t-price">' + (TABLE_PRICE[i] ? parseInt(TABLE_PRICE[i]) / 1e6 : i * 100) + " USDT</div>" : "");
     
-    if (clickable) {
+    if ((isOpen || isComingSoon) && clickable) {
       btn.style.cursor = "pointer";
       btn.addEventListener("click", () => {
-        activeTable = i;
-        renderAll();
+        if (isOpen || isComingSoon) {
+          activeTable = i;
+          renderAll();
+        }
       });
     }
     grid.appendChild(btn);
@@ -354,21 +379,27 @@ async function renderLevels(id) {
       else if (lvl === currentLvl) cls += " current";
       else cls += " locked";
       
-      let req = lvl === 1
-        ? "Вход · получают выплаты с ур. 2–5"
-        : "Нужно " + LEVEL_THRESHOLDS[i] + " покупок (" + buyCount + ")";
-      
+      let req = "";
       let bar = "";
-      if (lvl === currentLvl && currentLvl < 5 && LEVEL_THRESHOLDS[i + 1]) {
-        const prev = LEVEL_THRESHOLDS[lvl - 1];
-        const next = LEVEL_THRESHOLDS[lvl];
-        const inLevel = buyCount - prev;
-        const need = next - prev;
-        const pct = Math.min(100, Math.round((inLevel / need) * 100));
-        req = "До ур. " + (currentLvl + 1) + ": ещё " + (need - inLevel) + " / " + need;
-        bar = '<div class="bar-bg"><div class="bar-fill" style="width:' + pct + '%"></div></div><div class="bar-text">' + inLevel + "/" + need + "</div>";
-      } else if (lvl < currentLvl) {
-        bar = '<div class="bar-bg"><div class="bar-fill" style="width:100%"></div></div>';
+      
+      if (lvl === 1) {
+        req = "Вход · 0 участников";
+      } else {
+        const threshold = LEVEL_THRESHOLDS[i];
+        if (lvl === currentLvl && currentLvl < 5) {
+          const prev = LEVEL_THRESHOLDS[lvl - 1];
+          const next = LEVEL_THRESHOLDS[lvl];
+          const inLevel = buyCount - prev;
+          const need = next - prev;
+          const pct = Math.min(100, Math.round((inLevel / need) * 100));
+          req = "Прогресс: " + inLevel + " / " + need;
+          bar = '<div class="bar-bg"><div class="bar-fill" style="width:' + pct + '%"></div></div>';
+        } else if (lvl < currentLvl) {
+          req = "Завершено · " + threshold + "+ участников";
+          bar = '<div class="bar-bg"><div class="bar-fill" style="width:100%"></div></div>';
+        } else {
+          req = "Нужно " + threshold + "+ участников";
+        }
       }
       
       const el = document.createElement("div");
@@ -423,7 +454,7 @@ function renderWalletBar() {
     info.className = "";
     info.innerHTML =
       (connectedWalletName ? '<div class="wname">' + escapeHtml(connectedWalletName) + "</div>" : "") +
-      '<div class="addr">' + connectedWallet + '</div><div class="bal">Адрес подключен</div>';
+      '<div class="addr">' + connectedWallet + '</div>';
     setHidden(conn, true);
     setHidden(disc, false);
   } else {
@@ -459,20 +490,15 @@ function showScreen(name) {
 async function renderCabinet() {
   renderWalletBar();
   const wEl = document.getElementById("cabWallet");
-  const emptyRow = '<tr><td colspan="5" style="color:var(--muted)">Пока пусто</td></tr>';
+  const emptyRow = '<tr><td colspan="4" style="color:var(--muted)">Пока пусто</td></tr>';
   
-  if (!connectedWallet || !stolyContract || !usdtContract) {
-    wEl.textContent = "Подключите кошелёк, чтобы видеть баланс и выплаты на ваш адрес.";
-    document.getElementById("cabBal").textContent = "—";
-    document.getElementById("cabIn").textContent = "—";
-    document.getElementById("cabOut").textContent = "—";
+  if (!connectedWallet || !stolyContract) {
+    wEl.textContent = "Подключите кошелёк, чтобы видеть выплаты.";
     document.getElementById("cabPayouts").innerHTML = emptyRow;
-    document.getElementById("cabBuys").innerHTML = '<tr><td colspan="4" style="color:var(--muted)">Пока пусто</td></tr>';
     return;
   }
 
   try {
-    const balance = await usdtContract.balanceOf(connectedWallet);
     const claimable = await stolyContract.claimableBalance(connectedWallet);
     const allPayouts = await stolyContract.getPayouts();
     
@@ -483,27 +509,28 @@ async function renderCabinet() {
       incoming += BigInt(p[4]);
     });
 
-    wEl.innerHTML = "Адрес выплат: <span class=\"addr\">" + escapeHtml(connectedWallet) + "</span>";
-    document.getElementById("cabBal").textContent = (balance / BigInt(1e6)).toString();
-    document.getElementById("cabIn").textContent = (incoming / BigInt(1e6)).toString();
-    document.getElementById("cabOut").textContent = "—";
+    wEl.innerHTML = "Адрес кошелька: <span class=\"addr\">" + escapeHtml(connectedWallet) + "</span>";
     
     document.getElementById("cabPayouts").innerHTML = mine.length
       ? mine.map((p) => {
         const date = new Date(parseInt(p[5]) * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "medium" });
-        return "<tr><td>" + date + "</td><td>" + p[3] + "</td><td>" + shortAddr(p[2]) +
-          "</td><td>+" + (parseInt(p[4]) / 1e6).toFixed(2) + '</td><td class="status-ok">' + (p[6] ? "получено" : "ожидает") + "</td></tr>";
+        return "<tr><td>" + date + "</td><td>Стол " + p[3] + "</td><td>+" + (parseInt(p[4]) / 1e6).toFixed(2) + " USDT</td><td class=\"status-ok\">" + (p[6] ? "получено" : "ожидает") + "</td></tr>";
       }).join("")
       : emptyRow;
     
     // Button to claim
-    const claimBtn = document.createElement("button");
-    claimBtn.className = "btn btn-buy";
-    claimBtn.textContent = "Забрать выплаты: +" + (claimable / BigInt(1e6)).toString() + " USDT";
-    claimBtn.style.marginTop = "15px";
     if (claimable > BigInt(0)) {
+      const claimBtn = document.createElement("button");
+      claimBtn.className = "btn btn-buy";
+      claimBtn.textContent = "💰 Забрать: +" + (claimable / BigInt(1e6)).toString() + " USDT";
+      claimBtn.style.marginTop = "15px";
+      claimBtn.style.fontSize = "16px";
+      claimBtn.style.fontWeight = "700";
       claimBtn.addEventListener("click", claim);
-      document.getElementById("cabPayouts").parentElement.appendChild(claimBtn);
+      const container = document.getElementById("cabPayouts").parentElement;
+      const oldBtn = container.querySelector(".btn-buy");
+      if (oldBtn) oldBtn.remove();
+      container.appendChild(claimBtn);
     }
     
   } catch (err) {
@@ -526,13 +553,14 @@ async function renderUser() {
       
       document.getElementById("uBuys").textContent = buyCount;
       document.getElementById("uLevel").textContent = currentLvl;
-      document.getElementById("uMelons").textContent = (buyCount * parseInt(price) / 1e6).toFixed(2);
-      document.getElementById("uPaid").textContent = "—";
+      document.getElementById("uMelons").textContent = (buyCount * parseInt(price) / 1e6).toFixed(2) + " USDT";
       document.getElementById("uTableTitle").textContent = activeTable;
-      document.getElementById("uPrice").textContent = "= " + (parseInt(price) / 1e6) + " USDT";
-      document.getElementById("uBadge").textContent = "открыт";
-      document.getElementById("uBadge").className = "badge";
-      document.getElementById("uBuyForm").style.display = "flex";
+      document.getElementById("uPrice").textContent = (parseInt(price) / 1e6) + " USDT";
+      
+      const isOpen = activeTable === 1;
+      document.getElementById("uBadge").textContent = isOpen ? "открыт" : "скоро";
+      document.getElementById("uBadge").className = "badge" + (isOpen ? "" : " wait");
+      document.getElementById("uBuyForm").style.display = isOpen ? "flex" : "none";
       document.getElementById("uBuyBtn").disabled = !connectedWallet;
     } catch (err) {
       console.error("Error in renderUser:", err);
@@ -562,6 +590,18 @@ function applyRoute() {
   renderAll();
 }
 
+// Admin functions
+function checkAdminAccess() {
+  const key = "stoly_admin_access_" + Date.now();
+  if (connectedWallet) {
+    const walletKey = "stoly_admin_" + connectedWallet;
+    if (localStorage.getItem(walletKey)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Event listeners
 document.getElementById("headerConnect").addEventListener("click", () => {
   if (connectedWallet) location.hash = "#/cabinet";
@@ -573,11 +613,14 @@ document.getElementById("loginBtn").addEventListener("click", () => {
   const p = document.getElementById("loginPass").value;
   if (u === ADMIN_USER && p === ADMIN_PASS) {
     isAdmin = true;
+    if (connectedWallet) {
+      localStorage.setItem("stoly_admin_" + connectedWallet, "true");
+    }
     document.getElementById("loginPass").value = "";
     document.getElementById("loginErr").textContent = "";
     location.hash = "#/admin";
     applyRoute();
-    toast("Вход выполнен");
+    toast("Админ-доступ активирован");
   } else document.getElementById("loginErr").textContent = "Неверный логин или пароль";
 });
 
@@ -587,6 +630,9 @@ document.getElementById("loginPass").addEventListener("keydown", (e) => {
 
 document.getElementById("logoutBtn").addEventListener("click", () => {
   isAdmin = false;
+  if (connectedWallet) {
+    localStorage.removeItem("stoly_admin_" + connectedWallet);
+  }
   location.hash = "#/";
   applyRoute();
   toast("Выход");
@@ -607,9 +653,16 @@ document.getElementById("uBuyBtn").addEventListener("click", () => {
   buy(activeTable);
 });
 
+// Timer update
 setInterval(() => {
+  if (mode === "user" || mode === "admin") {
+    const timerEl = document.querySelector(".t-timer");
+    if (timerEl) {
+      timerEl.textContent = formatCountdown(TABLE_2_OPEN_TIME * 1000 - Date.now());
+    }
+  }
   if (mode === "user" || mode === "cabinet") renderAll();
-}, 3000);
+}, 1000);
 
 window.addEventListener("hashchange", applyRoute);
 
