@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "Учебная симуляция столов (арбузы)",
   "scripts": {
-    "dev": "npx --yes serve . -p 5173"
+    "dev": "node server.js",
+    "serve": "npx --yes serve . -p 5173"
   }
 }
