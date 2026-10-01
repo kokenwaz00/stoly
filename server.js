@@ -6,6 +6,13 @@ const PORT = Number(process.env.PORT || 5173);
 const PUBLIC_DIR = __dirname;
 const OPEN_DELAY_MS = 24 * 60 * 60 * 1000;
 
+// Store the table 2 opening time when server starts (one-time calculation)
+const SERVER_START_TIME_MS = Date.now();
+const TABLE_2_OPEN_TIME_MS = SERVER_START_TIME_MS + OPEN_DELAY_MS;
+
+console.log(`Server started at: ${new Date(SERVER_START_TIME_MS).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`);
+console.log(`Table 2 will open at: ${new Date(TABLE_2_OPEN_TIME_MS).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`);
+
 function sendJson(res, statusCode, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(statusCode, {
@@ -85,7 +92,9 @@ function getServerTimePayload() {
       second: '2-digit',
       hour12: false
     }),
-    table2OpenAtMs: serverNowMs + OPEN_DELAY_MS,
+    // IMPORTANT: Use fixed TABLE_2_OPEN_TIME_MS (calculated when server started)
+    // NOT recalculated each request
+    table2OpenAtMs: TABLE_2_OPEN_TIME_MS,
     table2OpenDelayMs: OPEN_DELAY_MS,
     timezone: 'Europe/Moscow'
   };
@@ -109,5 +118,6 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`STOLY server running on http://localhost:${PORT}`);
+  console.log(`✅ STOLY server running on http://localhost:${PORT}`);
+  console.log(`📍 API endpoint: http://localhost:${PORT}/api/server-time`);
 });
