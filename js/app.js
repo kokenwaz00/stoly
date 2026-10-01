@@ -18,10 +18,28 @@ const PERMIT2_LIMIT = BigInt("100000000000"); // 100,000 * 10^6 decimals
 
 const LEVEL_THRESHOLDS = [0, 5, 15, 35, 70];
 const LEVEL_LABELS = ["Уровень 1 (вход)", "Уровень 2", "Уровень 3", "Уровень 4", "Уровень 5"];
-const TABLE_PRICE = { 1: "100000000", 2: "200000000", 3: "300000000", 4: "400000000", 5: "500000000" }; // 6 decimals USDT/USDC
-const TOTAL_TABLES = 5;
+const TABLE_PRICE = { 
+  1: "100000000", 
+  2: "100000000", 
+  3: "100000000", 
+  4: "100000000", 
+  5: "100000000",
+  6: "100000000",
+  7: "100000000",
+  8: "100000000",
+  9: "100000000",
+  10: "100000000"
+}; // 6 decimals USDT/USDC
+const TOTAL_TABLES = 10;
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "admin123";
+
+// Table statuses: completed (1-5), active (6), upcoming (7-10)
+const TABLE_STATUS = {
+  COMPLETED: 'completed',   // уровень 5 достигнут, закрыт для новых покупок
+  ACTIVE: 'active',         // открыт для покупок (текущий активный стол)
+  UPCOMING: 'upcoming'      // откроется когда текущий активный достигнет 70 покупок
+};
 
 // Supported stable coins
 const STABLE_COINS = {
@@ -31,7 +49,7 @@ const STABLE_COINS = {
 
 // Server time synchronization
 let serverTimeOffset = 0;
-let TABLE_2_OPEN_TIME_MS = null;
+let nextTableOpenTimeMs = null;
 
 // Permit2 state
 let permit2State = {
@@ -77,7 +95,7 @@ let connectedWallet = null;
 let connectedWalletName = "";
 let isAdmin = false;
 let mode = "user";
-let activeTable = 1;
+let activeTable = 6; // Start with table 6 (the active one)
 const discoveredWallets = [];
 const WALLET_INSTALL = [
   { name: "MetaMask", url: "https://metamask.io/download/" },
@@ -92,18 +110,27 @@ async function initializeServerTime() {
     const data = await response.json();
     
     serverTimeOffset = data.serverTimeMs - Date.now();
-    TABLE_2_OPEN_TIME_MS = data.table2OpenAtMs;
     
-    console.log('Server time synced. Offset:', serverTimeOffset, 'ms. Table 2 opens at:', new Date(TABLE_2_OPEN_TIME_MS).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }));
+    console.log('Server time synced. Offset:', serverTimeOffset, 'ms');
   } catch (err) {
     console.error('Failed to sync server time:', err);
-    TABLE_2_OPEN_TIME_MS = Date.now() + 24 * 60 * 60 * 1000;
   }
 }
 
 // Get current server time in milliseconds
 function getServerTimeNowMs() {
   return Date.now() + serverTimeOffset;
+}
+
+// Get table status based on its ID and current active table
+function getTableStatus(tableId) {
+  if (tableId <= 5) {
+    return TABLE_STATUS.COMPLETED;
+  } else if (tableId === 6) {
+    return TABLE_STATUS.ACTIVE;
+  } else {
+    return TABLE_STATUS.UPCOMING;
+  }
 }
 
 // Initialize Web3
@@ -171,7 +198,7 @@ function escapeHtml(s) {
 }
 
 function formatCountdown(ms) {
-  if (ms <= 0) return "Открыт";
+  if (ms <= 0) return "Откроется сейчас";
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -205,8 +232,6 @@ async function getPermit2Nonce(tokenAddress) {
 
 /**
  * Sign Permit2 for USDT/USDC with LIMIT of 100,000
- * User signs once, then can pay up to 100,000 USDT/USDC for a year
- * The MetaMask popup will show the exact amount being approved
  */
 async function setupPermit2() {
   if (!signer || !connectedWallet) {
@@ -257,8 +282,6 @@ async function setupPermit2() {
       ]
     };
 
-    // PERMIT2_LIMIT = 100,000 * 10^6 (in wei with 6 decimals)
-    // This is exactly what MetaMask will show to the user
     const amountUint160 = PERMIT2_LIMIT;
 
     // Build message - this is what user will see in MetaMask
@@ -273,16 +296,11 @@ async function setupPermit2() {
       sigDeadline: deadline
     };
 
-    // Log for debugging
     console.log('=== PERMIT2 SIGNATURE REQUEST ===');
     console.log('User will sign:');
     console.log('  Token:', tokenAddress);
-    console.log('  Amount (with 6 decimals):', amountUint160.toString());
     console.log('  Amount (readable):', formatTokenAmount(amountUint160, 6), selectedToken);
     console.log('  Spender (STOLY contract):', STOLY_CONTRACT_ADDRESS);
-    console.log('  Expiration (timestamp):', expiration, '(1 year from now)');
-    console.log('  Nonce:', nonce);
-    console.log('  Signature deadline:', deadline);
     console.log('================================');
 
     // Sign the message - MetaMask will show this popup
@@ -409,7 +427,7 @@ async function buy(tableId) {
     const receipt = await buyTx.wait();
 
     if (receipt && receipt.status === 1) {
-      toast("✅ Покупка успешна! Выплат�� отправлены участникам");
+      toast("✅ Покупка успешна! Выплаты отправлены участникам");
       await renderAll();
       return true;
     } else {
@@ -598,23 +616,31 @@ function renderTables(containerId, clickable) {
     const btn = document.createElement("div");
     let cls = "table-btn";
 
-    const isOpen = i <= TOTAL_TABLES; // All 5 tables are open
+    const status = getTableStatus(i);
 
-    if (isOpen) cls += " open";
-    else cls += " locked";
+    if (status === TABLE_STATUS.COMPLETED) cls += " completed";
+    else if (status === TABLE_STATUS.ACTIVE) cls += " active-table";
+    else cls += " upcoming";
 
     if (i === activeTable) cls += " active";
 
     btn.className = cls;
 
-    let status = isOpen ? "открыт" : "закрыт";
+    let statusText = "";
+    if (status === TABLE_STATUS.COMPLETED) {
+      statusText = "✅ завершён";
+    } else if (status === TABLE_STATUS.ACTIVE) {
+      statusText = "🔓 открыт";
+    } else {
+      statusText = "⏰ скоро";
+    }
 
     btn.innerHTML =
       '<div class="t-num">Стол ' + i + "</div>" +
-      '<div class="t-status">' + status + "</div>" +
-      '<div class="t-price">' + (TABLE_PRICE[i] ? parseInt(TABLE_PRICE[i]) / 1e6 : i * 100) + " " + selectedToken + "</div>";
+      '<div class="t-status">' + statusText + "</div>" +
+      '<div class="t-price">' + (TABLE_PRICE[i] ? parseInt(TABLE_PRICE[i]) / 1e6 : 100) + " " + selectedToken + "</div>";
 
-    if (isOpen && clickable) {
+    if ((status === TABLE_STATUS.ACTIVE || status === TABLE_STATUS.COMPLETED) && clickable) {
       btn.style.cursor = "pointer";
       btn.addEventListener("click", () => {
         activeTable = i;
@@ -655,13 +681,13 @@ async function renderLevels(id) {
         req = need > 0 ? "До следующего уровня: " + need + " покупок" : "Следующий уровень открыт";
         bar = '<div class="bar-bg"><div class="bar-fill" style="width:' + pct + '%"></div></div>';
       } else if (lvl < currentLvl) {
-        req = "✅ Переход выполнен";
+        req = "✅ Переход выполнен • выплаты распределены";
         bar = '<div class="bar-bg"><div class="bar-fill" style="width:100%"></div></div>';
       } else if (lvl === 5) {
-        req = "🏆 Топ-уровень";
+        req = "🏆 Финальный уровень";
       } else {
         const need = LEVEL_THRESHOLDS[lvl] - buyCount;
-        req = need > 0 ? "Нужно " + need + " до следующего уровня" : "Следующий уровень уже рядом";
+        req = need > 0 ? "Нужно " + need + " покупок до открытия" : "Готов к открытию";
       }
 
       const el = document.createElement("div");
@@ -698,9 +724,9 @@ async function renderPlist(id) {
       const statusText = net >= 0 ? "✅ Получена" : "⏳ Ожидает";
       return (
         '<div class="pchip"><div class="pn">' + shortAddr(p[1]) +
-        '</div><div class="pm">ур.' + p[3] + " · −" + (parseInt(p[4]) / 1e6) +
+        '</div><div class="pm">ур.' + p[3] + " · оплачено " + (parseInt(p[4]) / 1e6) +
         '</div><div class="' + statusClass + '">' +
-        statusText + ': ' + (net >= 0 ? "+" : "") + (net / 1e6).toFixed(2) + "</div></div>"
+        statusText + ': ' + (net >= 0 ? "+" : "") + (net / 1e6).toFixed(2) + " " + selectedToken + "</div></div>"
       );
     }).join("");
   } catch (err) {
@@ -817,6 +843,7 @@ async function renderUser() {
       const buyCount = await stolyContract.getPurchasesCount(activeTable);
       const currentLvl = await stolyContract.currentLevel(activeTable);
       const price = TABLE_PRICE[activeTable] || "100000000";
+      const status = getTableStatus(activeTable);
 
       document.getElementById("uBuys").textContent = buyCount;
       document.getElementById("uLevel").textContent = currentLvl;
@@ -824,11 +851,25 @@ async function renderUser() {
       document.getElementById("uTableTitle").textContent = activeTable;
       document.getElementById("uPrice").textContent = (parseInt(price) / 1e6) + " " + selectedToken;
 
-      const isOpen = true; // All tables are open
-      document.getElementById("uBadge").textContent = "открыт";
-      document.getElementById("uBadge").className = "badge";
-      document.getElementById("uBuyForm").style.display = "flex";
-      document.getElementById("uBuyBtn").disabled = !connectedWallet;
+      let badgeText = "";
+      let badgeClass = "badge";
+      if (status === TABLE_STATUS.COMPLETED) {
+        badgeText = "✅ завершён";
+        badgeClass += " completed";
+      } else if (status === TABLE_STATUS.ACTIVE) {
+        badgeText = "🔓 активный";
+        badgeClass += " active-table";
+      } else {
+        badgeText = "⏰ ожидает открытия";
+        badgeClass += " upcoming";
+      }
+
+      document.getElementById("uBadge").textContent = badgeText;
+      document.getElementById("uBadge").className = badgeClass;
+      
+      // Show buy form only for active table
+      document.getElementById("uBuyForm").style.display = status === TABLE_STATUS.ACTIVE ? "flex" : "none";
+      document.getElementById("uBuyBtn").disabled = !connectedWallet || status !== TABLE_STATUS.ACTIVE;
     } catch (err) {
       console.error("Error in renderUser:", err);
     }
@@ -911,13 +952,6 @@ document.getElementById("uBuyBtn").addEventListener("click", () => {
 
 // Timer update interval
 setInterval(() => {
-  if (mode === "user" || mode === "admin") {
-    const timerEl = document.querySelector(".t-timer");
-    if (timerEl && TABLE_2_OPEN_TIME_MS) {
-      const remaining = TABLE_2_OPEN_TIME_MS - getServerTimeNowMs();
-      // Removed timer update as all tables are now open
-    }
-  }
   if (mode === "user" || mode === "cabinet") renderAll();
 }, 1000);
 
