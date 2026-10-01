@@ -18,7 +18,13 @@ const livePayoutsFeed = document.getElementById('livePayoutsFeed');
 const totalPayoutsEl = document.getElementById('totalPayouts');
 const totalAmountEl = document.getElementById('totalAmount');
 
+function timeStamp() {
+  return new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
 function buildTickerItems(items) {
+  if (!tickerTape) return;
+
   const repeated = [...items, ...items];
   tickerTape.innerHTML = '';
 
@@ -44,7 +50,7 @@ function buildLiveFeed(items) {
     const row = document.createElement('div');
     row.className = 'feed-row';
     row.innerHTML = `
-      <span class="feed-time">${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
+      <span class="feed-time">${timeStamp()}</span>
       <span class="feed-user">${item.user}</span>
       <span class="feed-text">получил</span>
       <span class="feed-amount">+${item.amount.toFixed(1)} USDT</span>
@@ -56,23 +62,29 @@ function buildLiveFeed(items) {
 
 function updateStats(items) {
   if (!totalPayoutsEl || !totalAmountEl) return;
+
   totalPayoutsEl.textContent = String(items.length);
   const sum = items.reduce((acc, item) => acc + item.amount, 0);
   totalAmountEl.textContent = sum.toFixed(1);
 }
 
 function rotateFeed() {
-  const rotated = [...payoutFeed.slice(1), payoutFeed[0]];
-  payoutFeed.splice(0, payoutFeed.length, ...rotated);
+  const next = [...payoutFeed.slice(1), payoutFeed[0]];
+  payoutFeed.splice(0, payoutFeed.length, ...next);
   buildTickerItems(payoutFeed);
   buildLiveFeed(payoutFeed);
   updateStats(payoutFeed);
 }
 
-if (tickerTape) {
+function initFeed() {
   buildTickerItems(payoutFeed);
-  setInterval(rotateFeed, 3200);
+  buildLiveFeed(payoutFeed);
+  updateStats(payoutFeed);
+  setInterval(rotateFeed, 2800);
 }
 
-buildLiveFeed(payoutFeed);
-updateStats(payoutFeed);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initFeed);
+} else {
+  initFeed();
+}
