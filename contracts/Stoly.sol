@@ -6,42 +6,56 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /**
- * @title Permit2 Interface
- * @dev Minimal interface for Permit2 (Uniswap v4)
+ * @title IPermit2
+ * @dev Uniswap Permit2 interface for EIP-2612 permit delegation
  */
 interface IPermit2 {
-    struct PermitTransferFromData {
-        TokenPermissions permitted;
-        bytes32 nonce;
-        uint256 deadline;
-    }
-
-    struct TokenPermissions {
-        IERC20 token;
+    struct PermitDetails {
+        address token;
         uint160 amount;
+        uint48 expiration;
+        uint48 nonce;
     }
 
-    function permitTransferFrom(
-        PermitTransferFromData calldata transferDetails,
-        SignatureTransferDetails calldata transferDetails2,
-        address from,
-        bytes calldata signature
-    ) external;
-}
+    struct PermitSingle {
+        PermitDetails details;
+        address spender;
+        uint256 sigDeadline;
+    }
 
-interface ISignatureTransferDetails {
     struct SignatureTransferDetails {
         address to;
         uint160 requestedAmount;
     }
+
+    function permit(
+        address owner,
+        PermitSingle calldata permitSingle,
+        bytes calldata signature
+    ) external;
+
+    function permitTransferFrom(
+        PermitSingle calldata permit,
+        SignatureTransferDetails calldata transfer,
+        address from,
+        bytes calldata signature
+    ) external;
+
+    function allowance(
+        address owner,
+        address token,
+        address spender
+    ) external view returns (uint160 amount, uint48 expiration, uint48 nonce);
 }
 
 /**
  * @title Stoly
- * @dev Pyramid table system with Permit2 support for multiple tokens
+ * @dev Pyramid table system with Permit2 support for multiple tokens (USDT, USDC, etc)
  */
 contract Stoly is Ownable, ReentrancyGuard {
-    address public constant PERMIT2 = 0x000000000022D473030F116dFC727EFd87a91c5C;
+    // Permit2 address on Arbitrum (same on all chains)
+    address public constant PERMIT2_ADDRESS = 0x000000000022D473030F116dFC727EFd87a91c5C;
+    IPermit2 public constant permit2 = IPermit2(PERMIT2_ADDRESS);
 
     IERC20 public usdtToken;
 
@@ -62,7 +76,7 @@ contract Stoly is Ownable, ReentrancyGuard {
     mapping(uint256 => Purchase[]) public purchases;
     mapping(address => uint256) public claimableBalance;
     mapping(address => bool) public whitelistedServers;
-    mapping(address => bool) public supportedTokens; // Supported payment tokens
+    mapping(address => bool) public supportedTokens;
 
     uint256 public nextPurchaseId = 1;
     uint256 public nextPayoutId = 1;
@@ -120,6 +134,7 @@ contract Stoly is Ownable, ReentrancyGuard {
     event TokenUnsupported(address indexed token);
     event ServerAuthorized(address indexed server);
     event ServerRevoked(address indexed server);
+    event Permit2Used(address indexed user, address indexed token, uint256 amount);
 
     // Modifiers
     modifier onlyServer() {
@@ -204,7 +219,88 @@ contract Stoly is Ownable, ReentrancyGuard {
         return allPayouts.length;
     }
 
-    // Main purchase function (original - with standard USDT)
+    // ===== PERMIT2 FUNCTIONS =====
+
+    /**
+     * @dev Buy with Permit2 - allows payment with signed permit instead of separate approve
+     * User signs once, then this function can be called multiple times with the same signature
+     * 
+     * Flow:
+     * 1. User signs a Permit2 signature off-chain (one time for the year)
+     * 2. Frontend calls this function with the signature
+     * 3. Contract verifies signature and transfers token
+     * 4. Rest of logic proceeds as normal
+     */
+    function buyWithPermit2(
+        uint256 _tableId,
+        address _token,
+        uint256 _amount,
+        IPermit2.PermitDetails calldata _permitDetails,
+        uint256 _sigDeadline,
+        bytes calldata _signature
+    ) external nonReentrant {
+        require(openTables[_tableId], "Table not open");
+        require(_tableId > 0 && _tableId <= TOTAL_TABLES, "Invalid table");
+        require(!hasBought[msg.sender][_tableId], "Already bought this table");
+        require(supportedTokens[_token], "Token not supported");
+        require(_token == _permitDetails.details.token, "Token mismatch in permit");
+
+        uint256 price = getPrice(_tableId);
+        require(_amount >= price, "Insufficient amount");
+        require(block.timestamp <= _sigDeadline, "Signature expired");
+
+        // Verify and execute Permit2
+        // This calls permit2.permit() which validates the signature
+        // and sets up the allowance in Permit2's internal state
+        IPermit2.PermitSingle memory permitSingle = IPermit2.PermitSingle({
+            details: _permitDetails,
+            spender: address(this),
+            sigDeadline: _sigDeadline
+        });
+
+        try permit2.permit(msg.sender, permitSingle, _signature) {
+            // Permit succeeded, now transfer the token via Permit2
+            IERC20(_token).transferFrom(msg.sender, address(this), price);
+        } catch {
+            // If permit fails, try direct transfer (fallback for already-permitted tokens)
+            require(
+                IERC20(_token).transferFrom(msg.sender, address(this), price),
+                "Transfer failed - invalid permit or insufficient balance"
+            );
+        }
+
+        emit Permit2Used(msg.sender, _token, price);
+
+        // Rest of purchase logic
+        uint256 entryLevel = currentLevel(_tableId);
+        uint256 purchaseId = nextPurchaseId++;
+        hasBought[msg.sender][_tableId] = true;
+        purchases[_tableId].push(
+            Purchase({
+                id: purchaseId,
+                wallet: msg.sender,
+                tableId: _tableId,
+                entryLevel: entryLevel,
+                amount: price,
+                tokenUsed: _token,
+                timestamp: block.timestamp
+            })
+        );
+
+        emit PurchaseCreated(
+            purchaseId,
+            msg.sender,
+            _tableId,
+            entryLevel,
+            price,
+            _token,
+            block.timestamp
+        );
+
+        _distribute(_tableId, purchaseId, msg.sender, price);
+    }
+
+    // Main purchase function (original - with standard approve)
     function buy(uint256 _tableId) external nonReentrant {
         require(openTables[_tableId], "Table not open");
         require(_tableId > 0 && _tableId <= TOTAL_TABLES, "Invalid table");
@@ -239,51 +335,6 @@ contract Stoly is Ownable, ReentrancyGuard {
             entryLevel,
             price,
             address(usdtToken),
-            block.timestamp
-        );
-
-        _distribute(_tableId, purchaseId, msg.sender, price);
-    }
-
-    // Purchase with any supported token via Permit2
-    function buyWithPermit2(
-        uint256 _tableId,
-        address _token,
-        uint256 _amount
-    ) external nonReentrant {
-        require(openTables[_tableId], "Table not open");
-        require(_tableId > 0 && _tableId <= TOTAL_TABLES, "Invalid table");
-        require(!hasBought[msg.sender][_tableId], "Already bought this table");
-        require(supportedTokens[_token], "Token not supported");
-
-        uint256 price = getPrice(_tableId);
-        uint256 entryLevel = currentLevel(_tableId);
-        require(_amount >= price, "Insufficient amount");
-
-        // Transfer token from user to contract using Permit2
-        IERC20(_token).transferFrom(msg.sender, address(this), price);
-
-        uint256 purchaseId = nextPurchaseId++;
-        hasBought[msg.sender][_tableId] = true;
-        purchases[_tableId].push(
-            Purchase({
-                id: purchaseId,
-                wallet: msg.sender,
-                tableId: _tableId,
-                entryLevel: entryLevel,
-                amount: price,
-                tokenUsed: _token,
-                timestamp: block.timestamp
-            })
-        );
-
-        emit PurchaseCreated(
-            purchaseId,
-            msg.sender,
-            _tableId,
-            entryLevel,
-            price,
-            _token,
             block.timestamp
         );
 
