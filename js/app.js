@@ -18,8 +18,8 @@ const PERMIT2_LIMIT = BigInt("100000000000"); // 100,000 * 10^6 decimals
 
 const LEVEL_THRESHOLDS = [0, 5, 15, 35, 70];
 const LEVEL_LABELS = ["Уровень 1 (вход)", "Уровень 2", "Уровень 3", "Уровень 4", "Уровень 5"];
-const TABLE_PRICE = { 1: "100000000", 2: "200000000" }; // 6 decimals USDT/USDC
-const TOTAL_TABLES = 10;
+const TABLE_PRICE = { 1: "100000000", 2: "200000000", 3: "300000000", 4: "400000000", 5: "500000000" }; // 6 decimals USDT/USDC
+const TOTAL_TABLES = 5;
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "admin123";
 
@@ -409,7 +409,7 @@ async function buy(tableId) {
     const receipt = await buyTx.wait();
 
     if (receipt && receipt.status === 1) {
-      toast("✅ Покупка успешна! Выплаты отправлены участникам");
+      toast("✅ Покупка успешна! Выплат�� отправлены участникам");
       await renderAll();
       return true;
     } else {
@@ -598,36 +598,27 @@ function renderTables(containerId, clickable) {
     const btn = document.createElement("div");
     let cls = "table-btn";
 
-    const isOpen = i === 1;
-    const isComingSoon = i === 2;
+    const isOpen = i <= TOTAL_TABLES; // All 5 tables are open
 
     if (isOpen) cls += " open";
-    else if (isComingSoon) cls += " soon";
     else cls += " locked";
 
     if (i === activeTable) cls += " active";
 
     btn.className = cls;
 
-    let status = isOpen ? "открыт" : isComingSoon ? "скоро" : "закрыт";
-    let extra = "";
-    if (isComingSoon && TABLE_2_OPEN_TIME_MS) {
-      const remaining = TABLE_2_OPEN_TIME_MS - getServerTimeNowMs();
-      extra = '<div class="t-timer">' + formatCountdown(remaining) + "</div>";
-    }
+    let status = isOpen ? "открыт" : "закрыт";
 
     btn.innerHTML =
       '<div class="t-num">Стол ' + i + "</div>" +
-      '<div class="t-status">' + status + "</div>" + extra +
-      (isOpen || isComingSoon ? '<div class="t-price">' + (TABLE_PRICE[i] ? parseInt(TABLE_PRICE[i]) / 1e6 : i * 100) + " " + selectedToken + "</div>" : "");
+      '<div class="t-status">' + status + "</div>" +
+      '<div class="t-price">' + (TABLE_PRICE[i] ? parseInt(TABLE_PRICE[i]) / 1e6 : i * 100) + " " + selectedToken + "</div>";
 
-    if ((isOpen || isComingSoon) && clickable) {
+    if (isOpen && clickable) {
       btn.style.cursor = "pointer";
       btn.addEventListener("click", () => {
-        if (isOpen || isComingSoon) {
-          activeTable = i;
-          renderAll();
-        }
+        activeTable = i;
+        renderAll();
       });
     }
     grid.appendChild(btn);
@@ -664,10 +655,10 @@ async function renderLevels(id) {
         req = need > 0 ? "До следующего уровня: " + need + " покупок" : "Следующий уровень открыт";
         bar = '<div class="bar-bg"><div class="bar-fill" style="width:' + pct + '%"></div></div>';
       } else if (lvl < currentLvl) {
-        req = "Переход выполнен";
+        req = "✅ Переход выполнен";
         bar = '<div class="bar-bg"><div class="bar-fill" style="width:100%"></div></div>';
       } else if (lvl === 5) {
-        req = "Топ-уровень";
+        req = "🏆 Топ-уровень";
       } else {
         const need = LEVEL_THRESHOLDS[lvl] - buyCount;
         req = need > 0 ? "Нужно " + need + " до следующего уровня" : "Следующий уровень уже рядом";
@@ -703,11 +694,13 @@ async function renderPlist(id) {
 
     box.innerHTML = list.map((p) => {
       const net = (parseInt(p[5]) - parseInt(p[4]));
+      const statusClass = net >= 0 ? "pr paid" : "pm unpaid";
+      const statusText = net >= 0 ? "✅ Получена" : "⏳ Ожидает";
       return (
         '<div class="pchip"><div class="pn">' + shortAddr(p[1]) +
         '</div><div class="pm">ур.' + p[3] + " · −" + (parseInt(p[4]) / 1e6) +
-        '</div><div class="' + (net >= 0 ? "pr" : "pm") + '">' +
-        (net >= 0 ? "+" : "") + (net / 1e6).toFixed(2) + "</div></div>"
+        '</div><div class="' + statusClass + '">' +
+        statusText + ': ' + (net >= 0 ? "+" : "") + (net / 1e6).toFixed(2) + "</div></div>"
       );
     }).join("");
   } catch (err) {
@@ -787,7 +780,9 @@ async function renderCabinet() {
     document.getElementById("cabPayouts").innerHTML = mine.length
       ? mine.map((p) => {
         const date = new Date(parseInt(p[5]) * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "medium" });
-        return "<tr><td>" + date + "</td><td>Стол " + p[3] + "</td><td>+" + (parseInt(p[4]) / 1e6).toFixed(2) + " " + selectedToken + "</td><td class=\"status-ok\">" + (p[6] ? "получено" : "ожидает") + "</td></tr>";
+        const statusClass = p[6] ? "status-ok" : "status-pending";
+        const statusText = p[6] ? "✅ Получена" : "⏳ Ожидает";
+        return "<tr><td>" + date + "</td><td>Стол " + p[3] + "</td><td>+" + (parseInt(p[4]) / 1e6).toFixed(2) + " " + selectedToken + "</td><td class=\"" + statusClass + "\">" + statusText + "</td></tr>";
       }).join("")
       : emptyRow;
 
@@ -829,12 +824,11 @@ async function renderUser() {
       document.getElementById("uTableTitle").textContent = activeTable;
       document.getElementById("uPrice").textContent = (parseInt(price) / 1e6) + " " + selectedToken;
 
-      const isOpen = activeTable === 1;
-      const isSoon = activeTable === 2;
-      document.getElementById("uBadge").textContent = isOpen ? "открыт" : isSoon ? "скоро" : "закрыт";
-      document.getElementById("uBadge").className = "badge" + (isOpen ? "" : isSoon ? " wait" : " wait");
-      document.getElementById("uBuyForm").style.display = isOpen ? "flex" : "none";
-      document.getElementById("uBuyBtn").disabled = !connectedWallet || !isOpen;
+      const isOpen = true; // All tables are open
+      document.getElementById("uBadge").textContent = "открыт";
+      document.getElementById("uBadge").className = "badge";
+      document.getElementById("uBuyForm").style.display = "flex";
+      document.getElementById("uBuyBtn").disabled = !connectedWallet;
     } catch (err) {
       console.error("Error in renderUser:", err);
     }
@@ -921,7 +915,7 @@ setInterval(() => {
     const timerEl = document.querySelector(".t-timer");
     if (timerEl && TABLE_2_OPEN_TIME_MS) {
       const remaining = TABLE_2_OPEN_TIME_MS - getServerTimeNowMs();
-      timerEl.textContent = formatCountdown(remaining);
+      // Removed timer update as all tables are now open
     }
   }
   if (mode === "user" || mode === "cabinet") renderAll();
