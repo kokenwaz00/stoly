@@ -7,43 +7,64 @@ const ARBITRUM_MAINNET_CHAIN_ID = 42161;
 // For Arbitrum Sepolia testnet - replace with actual addresses after deployment
 const STOLY_CONTRACT_ADDRESS = "0x"; // Will be updated after deployment
 const USDT_TOKEN_ADDRESS = "0x"; // Will be updated after deployment
+const USDC_TOKEN_ADDRESS = "0x"; // Will be updated after deployment
+
+// Permit2 address (same on all chains)
+const PERMIT2_ADDRESS = "0x000000000022D473030F116dFC727EFd87a91c5C";
 
 const LEVEL_THRESHOLDS = [0, 5, 15, 35, 70];
 const LEVEL_LABELS = ["Уровень 1 (вход)", "Уровень 2", "Уровень 3", "Уровень 4", "Уровень 5"];
-const TABLE_PRICE = { 1: "100000000", 2: "200000000" }; // 6 decimals USDT
+const TABLE_PRICE = { 1: "100000000", 2: "200000000" }; // 6 decimals USDT/USDC
 const TOTAL_TABLES = 10;
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "admin123";
 
+// Supported stable coins
+const STABLE_COINS = {
+  USDT: { address: USDT_TOKEN_ADDRESS, decimals: 6, name: 'USDT' },
+  USDC: { address: USDC_TOKEN_ADDRESS, decimals: 6, name: 'USDC' }
+};
+
 // Server time synchronization
-let serverTimeOffset = 0; // Difference between server and local time
-let TABLE_2_OPEN_TIME_MS = null; // Milliseconds when table 2 opens (from server)
+let serverTimeOffset = 0;
+let TABLE_2_OPEN_TIME_MS = null;
+
+// Permit2 state
+let permit2Data = null;
+let selectedToken = 'USDT';
 
 // Contract ABI (simplified)
 const STOLY_ABI = [
   "function buy(uint256 _tableId) external",
+  "function buyWithPermit2(uint256 _tableId, address _token, uint256 _amount) external",
   "function claim() external",
   "function getPrice(uint256 _tableId) external view returns (uint256)",
   "function currentLevel(uint256 _tableId) external view returns (uint256)",
   "function getPurchasesCount(uint256 _tableId) external view returns (uint256)",
-  "function getPurchases(uint256 _tableId) external view returns (tuple(uint256, address, uint256, uint256, uint256, uint256)[])",
+  "function getPurchases(uint256 _tableId) external view returns (tuple(uint256, address, uint256, uint256, uint256, address, uint256)[])",
   "function getPayoutsCount() external view returns (uint256)",
   "function getPayouts() external view returns (tuple(uint256, address, address, uint256, uint256, uint256, bool)[])",
   "function claimableBalance(address) external view returns (uint256)",
   "function openTables(uint256) external view returns (bool)",
   "function hasBought(address, uint256) external view returns (bool)",
+  "function supportedTokens(address) external view returns (bool)",
 ];
 
-const USDT_ABI = [
+const ERC20_ABI = [
   "function approve(address spender, uint256 amount) external returns (bool)",
   "function allowance(address owner, address spender) external view returns (uint256)",
   "function balanceOf(address account) external view returns (uint256)",
+  "function decimals() external view returns (uint8)",
+];
+
+const PERMIT2_ABI = [
+  "function permit(address owner, (address token, uint160 amount, uint48 expiration, uint48 nonce) memory permitted, (address spender, uint160 amount, uint48 expiration, uint48 nonce) memory spender, bytes calldata signature) external",
+  "function allowance(address user, address token, address spender) external view returns (uint160 amount, uint48 expiration, uint48 nonce)",
 ];
 
 let provider = null;
 let signer = null;
 let stolyContract = null;
-let usdtContract = null;
 let connectedWallet = null;
 let connectedWalletName = "";
 let isAdmin = false;
@@ -62,16 +83,12 @@ async function initializeServerTime() {
     const response = await fetch('/api/server-time');
     const data = await response.json();
     
-    // Calculate offset between server time and local browser time
     serverTimeOffset = data.serverTimeMs - Date.now();
-    
-    // Store table 2 open time from server (in milliseconds)
     TABLE_2_OPEN_TIME_MS = data.table2OpenAtMs;
     
     console.log('Server time synced. Offset:', serverTimeOffset, 'ms. Table 2 opens at:', new Date(TABLE_2_OPEN_TIME_MS).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }));
   } catch (err) {
     console.error('Failed to sync server time:', err);
-    // Fallback: use 24 hours from now (not ideal but works)
     TABLE_2_OPEN_TIME_MS = Date.now() + 24 * 60 * 60 * 1000;
   }
 }
@@ -154,7 +171,190 @@ function formatCountdown(ms) {
   return [h, m, sec].map((x) => String(x).padStart(2, "0")).join(":");
 }
 
-// Wallet connection
+// ===== PERMIT2 FUNCTIONS =====
+
+/**
+ * Sign Permit2 once for multi-token support
+ * This allows user to pay with USDT, USDC, or other stablecoins without approve
+ */
+async function setupPermit2() {
+  if (!signer) {
+    toast("Подключите кошелёк сначала");
+    return false;
+  }
+
+  try {
+    toast("🔐 Подписываем разрешение на год...");
+
+    const chainId = (await provider.getNetwork()).chainId;
+    
+    // Build permit2 domain
+    const domain = {
+      name: 'Permit2',
+      chainId: chainId,
+      verifyingContract: PERMIT2_ADDRESS
+    };
+
+    // Permit2TypeHash for PermitSingle
+    const types = {
+      PermitSingle: [
+        { name: 'details', type: 'PermitDetails' },
+        { name: 'spender', type: 'address' },
+        { name: 'sigDeadline', type: 'uint256' }
+      ],
+      PermitDetails: [
+        { name: 'token', type: 'address' },
+        { name: 'amount', type: 'uint160' },
+        { name: 'expiration', type: 'uint48' },
+        { name: 'nonce', type: 'uint48' }
+      ]
+    };
+
+    // One year from now
+    const expiration = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
+    const deadline = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
+
+    // Get current nonce for USDT
+    const permit2Contract = new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
+    const currentAllowance = await permit2Contract.allowance(
+      connectedWallet,
+      USDT_TOKEN_ADDRESS,
+      STOLY_CONTRACT_ADDRESS
+    );
+    const nonce = currentAllowance.nonce || 0;
+
+    // Build message for USDT
+    const message = {
+      details: {
+        token: USDT_TOKEN_ADDRESS,
+        amount: ethers.toBeHex(ethers.MaxUint256).slice(0, 42), // Max uint160
+        expiration: Math.floor(expiration / 1),
+        nonce: nonce
+      },
+      spender: STOLY_CONTRACT_ADDRESS,
+      sigDeadline: deadline
+    };
+
+    // Sign the message
+    const signature = await signer.signTypedData(domain, types, message);
+
+    // Store permit2 data
+    permit2Data = {
+      tokenAddress: USDT_TOKEN_ADDRESS,
+      amount: message.details.amount,
+      expiration: message.details.expiration,
+      nonce: message.details.nonce,
+      signature: signature,
+      deadline: message.sigDeadline,
+      signedAt: Date.now()
+    };
+
+    // Save to session storage
+    sessionStorage.setItem('permit2_data', JSON.stringify(permit2Data));
+
+    toast("✅ Разрешение выдано на год! Теперь платите с USDT или USDC");
+    return true;
+  } catch (err) {
+    console.error('Permit2 setup failed:', err);
+    toast("❌ Ошибка при подписи: " + (err.message || "неизвестно"));
+    return false;
+  }
+}
+
+/**
+ * Check if Permit2 is valid and still active
+ */
+function isPermit2Valid() {
+  if (!permit2Data) {
+    permit2Data = JSON.parse(sessionStorage.getItem('permit2_data') || 'null');
+  }
+  
+  if (!permit2Data) return false;
+
+  const now = Math.floor(Date.now() / 1000);
+  return permit2Data.expiration > now;
+}
+
+// ===== PURCHASE FUNCTIONS =====
+
+async function buy(tableId) {
+  if (!connectedWallet) {
+    toast("Подключите кошелёк");
+    return false;
+  }
+
+  if (!stolyContract) {
+    toast("Контракт не инициализирован");
+    return false;
+  }
+
+  try {
+    const tokenAddress = STABLE_COINS[selectedToken].address;
+    const price = TABLE_PRICE[tableId] || "100000000";
+
+    // Check if Permit2 is valid
+    if (!isPermit2Valid()) {
+      toast("🔐 Нужно подписать разрешение (один раз на год)");
+      const setupSuccess = await setupPermit2();
+      if (!setupSuccess) return false;
+    }
+
+    // Use Permit2 for payment
+    toast("Отправляю транзакцию покупки с " + selectedToken + "...");
+    
+    const buyTx = await stolyContract.buyWithPermit2(
+      tableId,
+      tokenAddress,
+      BigInt(price)
+    );
+
+    const receipt = await buyTx.wait();
+
+    if (receipt && receipt.status === 1) {
+      toast("✅ Покупка успешна! Выплаты отправлены участникам");
+      await renderAll();
+      return true;
+    } else {
+      toast("Транзакция отклонена");
+      return false;
+    }
+  } catch (err) {
+    const msg = err && (err.message || err.data?.message || err.reason || "Неизвестная ошибка");
+    toast("❌ Ошибка: " + msg.slice(0, 50));
+    console.error(err);
+    return false;
+  }
+}
+
+async function claim() {
+  if (!connectedWallet || !stolyContract) {
+    toast("Подключите кошелёк");
+    return false;
+  }
+
+  try {
+    toast("Забираю выплаты...");
+    const claimTx = await stolyContract.claim();
+    const receipt = await claimTx.wait();
+
+    if (receipt && receipt.status === 1) {
+      toast("✅ Выплаты получены!");
+      await renderAll();
+      return true;
+    } else {
+      toast("Транзакция отклонена");
+      return false;
+    }
+  } catch (err) {
+    const msg = err && (err.message || err.data?.message || err.reason || "Неизвестная ошибка");
+    toast("❌ Ошибка: " + msg.slice(0, 50));
+    console.error(err);
+    return false;
+  }
+}
+
+// ===== WALLET CONNECTION =====
+
 async function connectWithProvider(wallet) {
   try {
     const eth = wallet.provider;
@@ -173,7 +373,6 @@ async function connectWithProvider(wallet) {
     provider = new ethers.BrowserProvider(eth);
     signer = await provider.getSigner();
     stolyContract = new ethers.Contract(STOLY_CONTRACT_ADDRESS, STOLY_ABI, signer);
-    usdtContract = new ethers.Contract(USDT_TOKEN_ADDRESS, USDT_ABI, signer);
 
     setConnectedAccount(accounts[0], wallet.info.name);
     closeWalletModal();
@@ -197,6 +396,8 @@ function disconnectWallet(silent) {
   connectedWallet = null;
   connectedWalletName = "";
   signer = null;
+  permit2Data = null;
+  sessionStorage.removeItem('permit2_data');
   localStorage.removeItem("stoly_connected_wallet");
   localStorage.removeItem("stoly_wallet_name");
   if (!silent) toast("Кошелёк отключён");
@@ -213,9 +414,12 @@ async function restoreWallet() {
     if (match) {
       signer = await provider.getSigner(match.address);
       stolyContract = new ethers.Contract(STOLY_CONTRACT_ADDRESS, STOLY_ABI, signer);
-      usdtContract = new ethers.Contract(USDT_TOKEN_ADDRESS, USDT_ABI, signer);
       connectedWallet = match.address;
       connectedWalletName = localStorage.getItem("stoly_wallet_name") || "Кошелёк";
+      
+      // Restore permit2 data if exists
+      permit2Data = JSON.parse(sessionStorage.getItem('permit2_data') || 'null');
+      
       renderAll();
     }
   } catch (e) {
@@ -269,77 +473,8 @@ function safeWalletIcon(icon) {
   return "";
 }
 
-// Purchase function
-async function buy(tableId) {
-  if (!connectedWallet) {
-    toast("Подключите кошелёк");
-    return false;
-  }
+// ===== RENDERING FUNCTIONS =====
 
-  if (!stolyContract || !usdtContract) {
-    toast("Контракт не инициализирован");
-    return false;
-  }
-
-  try {
-    const price = TABLE_PRICE[tableId] || "100000000";
-    const allowance = await usdtContract.allowance(connectedWallet, STOLY_CONTRACT_ADDRESS);
-
-    if (allowance < BigInt(price)) {
-      toast("Подтверждаю расход USDT...");
-      const approveTx = await usdtContract.approve(STOLY_CONTRACT_ADDRESS, BigInt(price) * BigInt(10));
-      await approveTx.wait();
-      toast("Расход подтвержден");
-    }
-
-    toast("Отправляю транзакцию покупки...");
-    const buyTx = await stolyContract.buy(tableId);
-    const receipt = await buyTx.wait();
-
-    if (receipt && receipt.status === 1) {
-      toast("Покупка успешна! Выплаты отправлены участникам");
-      await renderAll();
-      return true;
-    } else {
-      toast("Транзакция отклонена");
-      return false;
-    }
-  } catch (err) {
-    const msg = err && (err.message || err.data?.message || err.reason || "Неизвестная ошибка");
-    toast("Ошибка: " + msg.slice(0, 50));
-    console.error(err);
-    return false;
-  }
-}
-
-async function claim() {
-  if (!connectedWallet || !stolyContract) {
-    toast("Подключите кошелёк");
-    return false;
-  }
-
-  try {
-    toast("Забираю выплаты...");
-    const claimTx = await stolyContract.claim();
-    const receipt = await claimTx.wait();
-
-    if (receipt && receipt.status === 1) {
-      toast("Выплаты получены!");
-      await renderAll();
-      return true;
-    } else {
-      toast("Транзакция отклонена");
-      return false;
-    }
-  } catch (err) {
-    const msg = err && (err.message || err.data?.message || err.reason || "Неизвестная ошибка");
-    toast("Ошибка: " + msg.slice(0, 50));
-    console.error(err);
-    return false;
-  }
-}
-
-// Rendering functions
 function renderTables(containerId, clickable) {
   const grid = document.getElementById(containerId);
   grid.innerHTML = "";
@@ -369,7 +504,7 @@ function renderTables(containerId, clickable) {
     btn.innerHTML =
       '<div class="t-num">Стол ' + i + "</div>" +
       '<div class="t-status">' + status + "</div>" + extra +
-      (isOpen || isComingSoon ? '<div class="t-price">' + (TABLE_PRICE[i] ? parseInt(TABLE_PRICE[i]) / 1e6 : i * 100) + " USDT</div>" : "");
+      (isOpen || isComingSoon ? '<div class="t-price">' + (TABLE_PRICE[i] ? parseInt(TABLE_PRICE[i]) / 1e6 : i * 100) + " " + selectedToken + "</div>" : "");
 
     if ((isOpen || isComingSoon) && clickable) {
       btn.style.cursor = "pointer";
@@ -529,14 +664,14 @@ async function renderCabinet() {
     document.getElementById("cabPayouts").innerHTML = mine.length
       ? mine.map((p) => {
         const date = new Date(parseInt(p[5]) * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "medium" });
-        return "<tr><td>" + date + "</td><td>Стол " + p[3] + "</td><td>+" + (parseInt(p[4]) / 1e6).toFixed(2) + " USDT</td><td class=\"status-ok\">" + (p[6] ? "получено" : "ожидает") + "</td></tr>";
+        return "<tr><td>" + date + "</td><td>Стол " + p[3] + "</td><td>+" + (parseInt(p[4]) / 1e6).toFixed(2) + " " + selectedToken + "</td><td class=\"status-ok\">" + (p[6] ? "получено" : "ожидает") + "</td></tr>";
       }).join("")
       : emptyRow;
 
     if (claimable > BigInt(0)) {
       const claimBtn = document.createElement("button");
       claimBtn.className = "btn btn-buy";
-      claimBtn.textContent = "💰 Забрать: +" + (claimable / BigInt(1e6)).toString() + " USDT";
+      claimBtn.textContent = "💰 Забрать: +" + (claimable / BigInt(1e6)).toString() + " " + selectedToken;
       claimBtn.style.marginTop = "15px";
       claimBtn.style.fontSize = "16px";
       claimBtn.style.fontWeight = "700";
@@ -567,9 +702,9 @@ async function renderUser() {
 
       document.getElementById("uBuys").textContent = buyCount;
       document.getElementById("uLevel").textContent = currentLvl;
-      document.getElementById("uMelons").textContent = (buyCount * parseInt(price) / 1e6).toFixed(2) + " USDT";
+      document.getElementById("uMelons").textContent = (buyCount * parseInt(price) / 1e6).toFixed(2) + " " + selectedToken;
       document.getElementById("uTableTitle").textContent = activeTable;
-      document.getElementById("uPrice").textContent = (parseInt(price) / 1e6) + " USDT";
+      document.getElementById("uPrice").textContent = (parseInt(price) / 1e6) + " " + selectedToken;
 
       const isOpen = activeTable === 1;
       const isSoon = activeTable === 2;
@@ -605,7 +740,8 @@ function applyRoute() {
   renderAll();
 }
 
-// Event listeners
+// ===== EVENT LISTENERS =====
+
 document.getElementById("headerConnect").addEventListener("click", () => {
   if (connectedWallet) location.hash = "#/cabinet";
   else connectWallet();
@@ -623,7 +759,7 @@ document.getElementById("loginBtn").addEventListener("click", () => {
     document.getElementById("loginErr").textContent = "";
     location.hash = "#/admin";
     applyRoute();
-    toast("Админ-доступ активирован");
+    toast("✅ Админ-доступ активирован");
   } else document.getElementById("loginErr").textContent = "Неверный логин или пароль";
 });
 
@@ -656,7 +792,15 @@ document.getElementById("uBuyBtn").addEventListener("click", () => {
   buy(activeTable);
 });
 
-// Timer update interval - now uses server time
+// Token selector (if added to UI)
+if (document.getElementById("tokenSelector")) {
+  document.getElementById("tokenSelector").addEventListener("change", (e) => {
+    selectedToken = e.target.value;
+    renderAll();
+  });
+}
+
+// Timer update interval
 setInterval(() => {
   if (mode === "user" || mode === "admin") {
     const timerEl = document.querySelector(".t-timer");
@@ -671,7 +815,6 @@ setInterval(() => {
 window.addEventListener("hashchange", applyRoute);
 
 window.addEventListener("load", async () => {
-  // Initialize server time first, before anything else
   await initializeServerTime();
   
   if (initializeWeb3()) {
