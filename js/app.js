@@ -12,6 +12,10 @@ const USDC_TOKEN_ADDRESS = "0x"; // Will be updated after deployment
 // Permit2 address (same on all chains)
 const PERMIT2_ADDRESS = "0x000000000022D473030F116dFC727EFd87a91c5C";
 
+// PERMIT2 LIMIT: Maximum amount user can approve for this contract
+// 100,000 USDT/USDC (with 6 decimals = 100000e6)
+const PERMIT2_LIMIT = BigInt("100000000000"); // 100,000 * 10^6 decimals
+
 const LEVEL_THRESHOLDS = [0, 5, 15, 35, 70];
 const LEVEL_LABELS = ["Уровень 1 (вход)", "Уровень 2", "Уровень 3", "Уровень 4", "Уровень 5"];
 const TABLE_PRICE = { 1: "100000000", 2: "200000000" }; // 6 decimals USDT/USDC
@@ -21,8 +25,8 @@ const ADMIN_PASS = "admin123";
 
 // Supported stable coins
 const STABLE_COINS = {
-  USDT: { address: USDT_TOKEN_ADDRESS, decimals: 6, name: 'USDT' },
-  USDC: { address: USDC_TOKEN_ADDRESS, decimals: 6, name: 'USDC' }
+  USDT: { address: USDT_TOKEN_ADDRESS, decimals: 6, name: 'USDT', symbol: '₽' },
+  USDC: { address: USDC_TOKEN_ADDRESS, decimals: 6, name: 'USDC', symbol: '$' }
 };
 
 // Server time synchronization
@@ -36,7 +40,10 @@ let permit2State = {
   nonce: null,
   expiration: null,
   deadline: null,
-  setupTime: null
+  setupTime: null,
+  token: null,
+  chainId: null,
+  limit: PERMIT2_LIMIT.toString()
 };
 
 let selectedToken = 'USDT';
@@ -44,7 +51,7 @@ let selectedToken = 'USDT';
 // Contract ABI (simplified)
 const STOLY_ABI = [
   "function buy(uint256 _tableId) external",
-  "function buyWithPermit2(uint256 _tableId, address _token, uint256 _amount, (address token, uint160 amount, uint48 expiration, uint48 nonce) permitted, uint256 deadline, bytes signature) external",
+  "function buyWithPermit2(uint256 _tableId, address _token, uint256 _amount, (address token, uint160 amount, uint48 expiration, uint48 nonce) _permitDetails, uint256 _sigDeadline, bytes _signature) external",
   "function claim() external",
   "function getPrice(uint256 _tableId) external view returns (uint256)",
   "function currentLevel(uint256 _tableId) external view returns (uint256)",
@@ -58,18 +65,9 @@ const STOLY_ABI = [
   "function supportedTokens(address) external view returns (bool)",
 ];
 
-const ERC20_ABI = [
-  "function approve(address spender, uint256 amount) external returns (bool)",
-  "function allowance(address owner, address spender) external view returns (uint256)",
-  "function balanceOf(address account) external view returns (uint256)",
-  "function decimals() external view returns (uint8)",
-  "function nonces(address owner) external view returns (uint256)",
-];
-
 const PERMIT2_ABI = [
-  "function allowance(address user, address token, address spender) external view returns (uint160 amount, uint48 expiration, uint48 nonce)",
-  "function permit(address owner, (address token, uint160 amount, uint48 expiration, uint48 nonce) memory permitted, (address spender, uint160 amount, uint48 expiration, uint48 nonce) memory spender, bytes calldata signature) external",
-  "function transferFrom(address from, address to, uint160 amount, address token) external",
+  "function allowance(address owner, address token, address spender) external view returns (uint160 amount, uint48 expiration, uint48 nonce)",
+  "function permit(address owner, (address token, uint160 amount, uint48 expiration, uint48 nonce) details, address spender, uint256 sigDeadline, bytes signature) external",
 ];
 
 let provider = null;
@@ -181,10 +179,14 @@ function formatCountdown(ms) {
   return [h, m, sec].map((x) => String(x).padStart(2, "0")).join(":");
 }
 
+function formatTokenAmount(amount, decimals = 6) {
+  return (BigInt(amount) / BigInt(10 ** decimals)).toString();
+}
+
 // ===== PERMIT2 FUNCTIONS =====
 
 /**
- * Get current nonce for Permit2
+ * Get current nonce for Permit2 from the Permit2 contract
  */
 async function getPermit2Nonce(tokenAddress) {
   try {
@@ -202,8 +204,9 @@ async function getPermit2Nonce(tokenAddress) {
 }
 
 /**
- * Sign Permit2 for multi-token support
- * Shows UI modal like buying, then signs permission for year
+ * Sign Permit2 for USDT/USDC with LIMIT of 100,000
+ * User signs once, then can pay up to 100,000 USDT/USDC for a year
+ * The MetaMask popup will show the exact amount being approved
  */
 async function setupPermit2() {
   if (!signer || !connectedWallet) {
@@ -223,7 +226,7 @@ async function setupPermit2() {
       }
     }
 
-    toast("🔐 Подписываем разрешение на оплату...");
+    toast("🔐 Подписываем разрешение на оплату (макс. 100,000 " + selectedToken + ")...");
 
     const tokenAddress = STABLE_COINS[selectedToken].address;
     const nonce = await getPermit2Nonce(tokenAddress);
@@ -239,7 +242,7 @@ async function setupPermit2() {
       verifyingContract: PERMIT2_ADDRESS
     };
 
-    // Permit2 types for PermitSingle
+    // Permit2 EIP-712 types
     const types = {
       PermitSingle: [
         { name: 'details', type: 'PermitDetails' },
@@ -254,14 +257,15 @@ async function setupPermit2() {
       ]
     };
 
-    // Max uint160 for unlimited amount
-    const maxAmount = BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'); // uint160 max
+    // PERMIT2_LIMIT = 100,000 * 10^6 (in wei with 6 decimals)
+    // This is exactly what MetaMask will show to the user
+    const amountUint160 = PERMIT2_LIMIT;
 
-    // Build message
+    // Build message - this is what user will see in MetaMask
     const message = {
       details: {
         token: tokenAddress,
-        amount: maxAmount.toString(),
+        amount: amountUint160.toString(),
         expiration: expiration,
         nonce: nonce
       },
@@ -269,8 +273,19 @@ async function setupPermit2() {
       sigDeadline: deadline
     };
 
-    // Sign the message
-    console.log('Signing Permit2 message:', message);
+    // Log for debugging
+    console.log('=== PERMIT2 SIGNATURE REQUEST ===');
+    console.log('User will sign:');
+    console.log('  Token:', tokenAddress);
+    console.log('  Amount (with 6 decimals):', amountUint160.toString());
+    console.log('  Amount (readable):', formatTokenAmount(amountUint160, 6), selectedToken);
+    console.log('  Spender (STOLY contract):', STOLY_CONTRACT_ADDRESS);
+    console.log('  Expiration (timestamp):', expiration, '(1 year from now)');
+    console.log('  Nonce:', nonce);
+    console.log('  Signature deadline:', deadline);
+    console.log('================================');
+
+    // Sign the message - MetaMask will show this popup
     const signature = await signer.signTypedData(domain, types, message);
 
     // Store permit2 state
@@ -282,13 +297,15 @@ async function setupPermit2() {
       deadline: deadline,
       setupTime: Date.now(),
       token: tokenAddress,
-      chainId: chainId
+      chainId: chainId,
+      limit: PERMIT2_LIMIT.toString()
     };
 
     // Save to localStorage
     localStorage.setItem('permit2_state', JSON.stringify(permit2State));
 
-    toast("✅ Разрешение выдано! Теперь можете платить за столы");
+    toast("✅ Разрешение выдано! Макс. лимит: 100,000 " + selectedToken + " на год");
+    console.log('Permit2 signature stored:', signature.slice(0, 20) + '...');
     return true;
   } catch (err) {
     console.error('Permit2 setup failed:', err);
@@ -338,7 +355,10 @@ function clearPermit2() {
     nonce: null,
     expiration: null,
     deadline: null,
-    setupTime: null
+    setupTime: null,
+    token: null,
+    chainId: null,
+    limit: PERMIT2_LIMIT.toString()
   };
   localStorage.removeItem('permit2_state');
 }
@@ -368,11 +388,11 @@ async function buy(tableId) {
     }
 
     // Use Permit2 for payment
-    toast("Отправляю транзакцию покупки за " + selectedToken + "...");
+    toast("Отправляю транзакцию покупки за " + (parseInt(price) / 1e6) + " " + selectedToken + "...");
     
-    const permitted = {
+    const permitDetails = {
       token: permit2State.token,
-      amount: permit2State.message?.details?.amount || BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'),
+      amount: permit2State.limit,
       expiration: permit2State.expiration,
       nonce: permit2State.nonce
     };
@@ -381,7 +401,7 @@ async function buy(tableId) {
       tableId,
       tokenAddress,
       BigInt(price),
-      permitted,
+      permitDetails,
       permit2State.deadline,
       permit2State.signature
     );
@@ -704,10 +724,11 @@ function renderWalletBar() {
   if (connectedWallet) {
     info.className = "";
     
-    // Add permit2 status indicator
-    const permit2Status = isPermit2Valid() 
-      ? '<div style="font-size:11px;color:#4caf50;margin-top:2px">🔐 Доступ активирован</div>' 
-      : '';
+    // Add permit2 status indicator with limit
+    let permit2Status = '';
+    if (isPermit2Valid()) {
+      permit2Status = '<div style="font-size:11px;color:#4caf50;margin-top:2px">🔐 Доступ: макс. 100,000 ' + selectedToken + '</div>';
+    }
     
     info.innerHTML =
       (connectedWalletName ? '<div class="wname">' + escapeHtml(connectedWalletName) + "</div>" : "") +
