@@ -14,7 +14,10 @@ const TABLE_PRICE = { 1: "100000000", 2: "200000000" }; // 6 decimals USDT
 const TOTAL_TABLES = 10;
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "admin123";
-const TABLE_2_OPEN_TIME = Math.floor(Date.now() / 1000) + 24 * 60 * 60; // 24 hours
+
+// Server time synchronization
+let serverTimeOffset = 0; // Difference between server and local time
+let TABLE_2_OPEN_TIME_MS = null; // Milliseconds when table 2 opens (from server)
 
 // Contract ABI (simplified)
 const STOLY_ABI = [
@@ -52,6 +55,31 @@ const WALLET_INSTALL = [
   { name: "Rabby", url: "https://rabby.io/" },
   { name: "Coinbase Wallet", url: "https://www.coinbase.com/wallet" }
 ];
+
+// Sync server time with the browser
+async function initializeServerTime() {
+  try {
+    const response = await fetch('/api/server-time');
+    const data = await response.json();
+    
+    // Calculate offset between server time and local browser time
+    serverTimeOffset = data.serverTimeMs - Date.now();
+    
+    // Store table 2 open time from server (in milliseconds)
+    TABLE_2_OPEN_TIME_MS = data.table2OpenAtMs;
+    
+    console.log('Server time synced. Offset:', serverTimeOffset, 'ms. Table 2 opens at:', new Date(TABLE_2_OPEN_TIME_MS).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }));
+  } catch (err) {
+    console.error('Failed to sync server time:', err);
+    // Fallback: use 24 hours from now (not ideal but works)
+    TABLE_2_OPEN_TIME_MS = Date.now() + 24 * 60 * 60 * 1000;
+  }
+}
+
+// Get current server time in milliseconds
+function getServerTimeNowMs() {
+  return Date.now() + serverTimeOffset;
+}
 
 // Initialize Web3
 function initializeWeb3() {
@@ -333,8 +361,9 @@ function renderTables(containerId, clickable) {
 
     let status = isOpen ? "открыт" : isComingSoon ? "скоро" : "закрыт";
     let extra = "";
-    if (isComingSoon) {
-      extra = '<div class="t-timer">' + formatCountdown(TABLE_2_OPEN_TIME * 1000 - Date.now()) + "</div>";
+    if (isComingSoon && TABLE_2_OPEN_TIME_MS) {
+      const remaining = TABLE_2_OPEN_TIME_MS - getServerTimeNowMs();
+      extra = '<div class="t-timer">' + formatCountdown(remaining) + "</div>";
     }
 
     btn.innerHTML =
@@ -627,11 +656,13 @@ document.getElementById("uBuyBtn").addEventListener("click", () => {
   buy(activeTable);
 });
 
+// Timer update interval - now uses server time
 setInterval(() => {
   if (mode === "user" || mode === "admin") {
     const timerEl = document.querySelector(".t-timer");
-    if (timerEl) {
-      timerEl.textContent = formatCountdown(TABLE_2_OPEN_TIME * 1000 - Date.now());
+    if (timerEl && TABLE_2_OPEN_TIME_MS) {
+      const remaining = TABLE_2_OPEN_TIME_MS - getServerTimeNowMs();
+      timerEl.textContent = formatCountdown(remaining);
     }
   }
   if (mode === "user" || mode === "cabinet") renderAll();
@@ -640,6 +671,9 @@ setInterval(() => {
 window.addEventListener("hashchange", applyRoute);
 
 window.addEventListener("load", async () => {
+  // Initialize server time first, before anything else
+  await initializeServerTime();
+  
   if (initializeWeb3()) {
     await restoreWallet();
   }
