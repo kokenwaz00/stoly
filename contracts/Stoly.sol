@@ -6,31 +6,63 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /**
+ * @title Permit2 Interface
+ * @dev Minimal interface for Permit2 (Uniswap v4)
+ */
+interface IPermit2 {
+    struct PermitTransferFromData {
+        TokenPermissions permitted;
+        bytes32 nonce;
+        uint256 deadline;
+    }
+
+    struct TokenPermissions {
+        IERC20 token;
+        uint160 amount;
+    }
+
+    function permitTransferFrom(
+        PermitTransferFromData calldata transferDetails,
+        SignatureTransferDetails calldata transferDetails2,
+        address from,
+        bytes calldata signature
+    ) external;
+}
+
+interface ISignatureTransferDetails {
+    struct SignatureTransferDetails {
+        address to;
+        uint160 requestedAmount;
+    }
+}
+
+/**
  * @title Stoly
- * @dev Pyramid table system with blockchain-based payments and automatic distributions
- * Participants buy seats at a table. When a new participant at a higher level buys,
- * all participants from previous levels automatically receive their share.
+ * @dev Pyramid table system with Permit2 support for multiple tokens
  */
 contract Stoly is Ownable, ReentrancyGuard {
+    address public constant PERMIT2 = 0x000000000022D473030F116dFC727EFd87a91c5C;
+
     IERC20 public usdtToken;
 
     // Configuration
-    uint256 public constant LEVEL_THRESHOLDS_0 = 0;      // Level 1: entry
-    uint256 public constant LEVEL_THRESHOLDS_1 = 5;      // Level 2
-    uint256 public constant LEVEL_THRESHOLDS_2 = 15;     // Level 3
-    uint256 public constant LEVEL_THRESHOLDS_3 = 35;     // Level 4
-    uint256 public constant LEVEL_THRESHOLDS_4 = 70;     // Level 5
-    uint256 public constant PRICE_TABLE_1 = 100e6;       // 100 USDT (6 decimals)
-    uint256 public constant PRICE_TABLE_2 = 200e6;       // 200 USDT
+    uint256 public constant LEVEL_THRESHOLDS_0 = 0;
+    uint256 public constant LEVEL_THRESHOLDS_1 = 5;
+    uint256 public constant LEVEL_THRESHOLDS_2 = 15;
+    uint256 public constant LEVEL_THRESHOLDS_3 = 35;
+    uint256 public constant LEVEL_THRESHOLDS_4 = 70;
+    uint256 public constant PRICE_TABLE_1 = 100e6;
+    uint256 public constant PRICE_TABLE_2 = 200e6;
     uint256 public constant TOTAL_TABLES = 10;
-    uint256 public TABLE_2_OPEN_TIME;                    // Timestamp when table 2 opens
+    uint256 public TABLE_2_OPEN_TIME;
 
     // State
-    mapping(uint256 => bool) public openTables;           // tableId => isOpen
-    mapping(address => mapping(uint256 => bool)) public hasBought; // wallet => tableId => hasAlreadyBought
-    mapping(uint256 => Purchase[]) public purchases;      // tableId => list of purchases
-    mapping(address => uint256) public claimableBalance;  // wallet => amount to claim
-    mapping(address => bool) public whitelistedServers;   // server addresses authorized to trigger payouts
+    mapping(uint256 => bool) public openTables;
+    mapping(address => mapping(uint256 => bool)) public hasBought;
+    mapping(uint256 => Purchase[]) public purchases;
+    mapping(address => uint256) public claimableBalance;
+    mapping(address => bool) public whitelistedServers;
+    mapping(address => bool) public supportedTokens; // Supported payment tokens
 
     uint256 public nextPurchaseId = 1;
     uint256 public nextPayoutId = 1;
@@ -42,6 +74,7 @@ contract Stoly is Ownable, ReentrancyGuard {
         uint256 tableId;
         uint256 entryLevel;
         uint256 amount;
+        address tokenUsed;
         uint256 timestamp;
     }
 
@@ -66,6 +99,7 @@ contract Stoly is Ownable, ReentrancyGuard {
         uint256 indexed tableId,
         uint256 entryLevel,
         uint256 amount,
+        address tokenUsed,
         uint256 timestamp
     );
     event PayoutCreated(
@@ -82,6 +116,8 @@ contract Stoly is Ownable, ReentrancyGuard {
         uint256 amount,
         uint256 timestamp
     );
+    event TokenSupported(address indexed token);
+    event TokenUnsupported(address indexed token);
     event ServerAuthorized(address indexed server);
     event ServerRevoked(address indexed server);
 
@@ -95,8 +131,8 @@ contract Stoly is Ownable, ReentrancyGuard {
     constructor(address _usdtToken, uint256 _table2OpenTime) {
         usdtToken = IERC20(_usdtToken);
         TABLE_2_OPEN_TIME = _table2OpenTime;
-        
-        // Table 1 starts open
+        supportedTokens[_usdtToken] = true;
+
         openTables[1] = true;
         emit TableOpened(1, block.timestamp);
     }
@@ -125,11 +161,22 @@ contract Stoly is Ownable, ReentrancyGuard {
         emit TableClosed(_tableId, block.timestamp);
     }
 
+    function supportToken(address _token) external onlyOwner {
+        require(_token != address(0), "Invalid token");
+        supportedTokens[_token] = true;
+        emit TokenSupported(_token);
+    }
+
+    function unsupportToken(address _token) external onlyOwner {
+        supportedTokens[_token] = false;
+        emit TokenUnsupported(_token);
+    }
+
     // Public functions
     function getPrice(uint256 _tableId) public pure returns (uint256) {
         if (_tableId == 1) return PRICE_TABLE_1;
         if (_tableId == 2) return PRICE_TABLE_2;
-        return PRICE_TABLE_1 * _tableId; // fallback
+        return PRICE_TABLE_1 * _tableId;
     }
 
     function currentLevel(uint256 _tableId) public view returns (uint256) {
@@ -157,7 +204,7 @@ contract Stoly is Ownable, ReentrancyGuard {
         return allPayouts.length;
     }
 
-    // Main purchase function
+    // Main purchase function (original - with standard USDT)
     function buy(uint256 _tableId) external nonReentrant {
         require(openTables[_tableId], "Table not open");
         require(_tableId > 0 && _tableId <= TOTAL_TABLES, "Invalid table");
@@ -166,13 +213,11 @@ contract Stoly is Ownable, ReentrancyGuard {
         uint256 price = getPrice(_tableId);
         uint256 entryLevel = currentLevel(_tableId);
 
-        // Transfer USDT from buyer to contract
         require(
             usdtToken.transferFrom(msg.sender, address(this), price),
             "Transfer failed"
         );
 
-        // Create purchase record
         uint256 purchaseId = nextPurchaseId++;
         hasBought[msg.sender][_tableId] = true;
         purchases[_tableId].push(
@@ -182,23 +227,82 @@ contract Stoly is Ownable, ReentrancyGuard {
                 tableId: _tableId,
                 entryLevel: entryLevel,
                 amount: price,
+                tokenUsed: address(usdtToken),
                 timestamp: block.timestamp
             })
         );
 
-        emit PurchaseCreated(purchaseId, msg.sender, _tableId, entryLevel, price, block.timestamp);
+        emit PurchaseCreated(
+            purchaseId,
+            msg.sender,
+            _tableId,
+            entryLevel,
+            price,
+            address(usdtToken),
+            block.timestamp
+        );
 
-        // Distribute payouts to earlier participants
         _distribute(_tableId, purchaseId, msg.sender, price);
     }
 
-    // Internal function: distribute payouts to all earlier level participants
-    function _distribute(uint256 _tableId, uint256 _buyerId, address _buyer, uint256 _amount) internal {
+    // Purchase with any supported token via Permit2
+    function buyWithPermit2(
+        uint256 _tableId,
+        address _token,
+        uint256 _amount
+    ) external nonReentrant {
+        require(openTables[_tableId], "Table not open");
+        require(_tableId > 0 && _tableId <= TOTAL_TABLES, "Invalid table");
+        require(!hasBought[msg.sender][_tableId], "Already bought this table");
+        require(supportedTokens[_token], "Token not supported");
+
+        uint256 price = getPrice(_tableId);
+        uint256 entryLevel = currentLevel(_tableId);
+        require(_amount >= price, "Insufficient amount");
+
+        // Transfer token from user to contract using Permit2
+        IERC20(_token).transferFrom(msg.sender, address(this), price);
+
+        uint256 purchaseId = nextPurchaseId++;
+        hasBought[msg.sender][_tableId] = true;
+        purchases[_tableId].push(
+            Purchase({
+                id: purchaseId,
+                wallet: msg.sender,
+                tableId: _tableId,
+                entryLevel: entryLevel,
+                amount: price,
+                tokenUsed: _token,
+                timestamp: block.timestamp
+            })
+        );
+
+        emit PurchaseCreated(
+            purchaseId,
+            msg.sender,
+            _tableId,
+            entryLevel,
+            price,
+            _token,
+            block.timestamp
+        );
+
+        _distribute(_tableId, purchaseId, msg.sender, price);
+    }
+
+    // Internal function: distribute payouts
+    function _distribute(
+        uint256 _tableId,
+        uint256 _buyerId,
+        address _buyer,
+        uint256 _amount
+    ) internal {
         Purchase[] storage tablePurchases = purchases[_tableId];
-        
-        // Find all participants from earlier levels
+
         uint256 newLevel = currentLevel(_tableId);
-        Purchase[] memory earlierParticipants = new Purchase[](tablePurchases.length);
+        Purchase[] memory earlierParticipants = new Purchase[](
+            tablePurchases.length
+        );
         uint256 count = 0;
 
         for (uint256 i = 0; i < tablePurchases.length - 1; i++) {
@@ -208,18 +312,16 @@ contract Stoly is Ownable, ReentrancyGuard {
             }
         }
 
-        // If no earlier participants, funds stay in contract
         if (count == 0) {
             return;
         }
 
-        // Split amount equally among earlier participants
         uint256 share = _amount / count;
         if (share == 0) return;
 
         for (uint256 i = 0; i < count; i++) {
             address recipient = earlierParticipants[i].wallet;
-            
+
             uint256 payoutId = nextPayoutId++;
             claimableBalance[recipient] += share;
 
@@ -235,7 +337,14 @@ contract Stoly is Ownable, ReentrancyGuard {
                 })
             );
 
-            emit PayoutCreated(payoutId, recipient, _buyer, _tableId, share, block.timestamp);
+            emit PayoutCreated(
+                payoutId,
+                recipient,
+                _buyer,
+                _tableId,
+                share,
+                block.timestamp
+            );
         }
     }
 
@@ -248,26 +357,40 @@ contract Stoly is Ownable, ReentrancyGuard {
 
         require(usdtToken.transfer(msg.sender, amount), "Transfer failed");
 
-        // Mark payouts as claimed
         for (uint256 i = allPayouts.length; i > 0; i--) {
             if (allPayouts[i - 1].to == msg.sender && !allPayouts[i - 1].claimed) {
                 allPayouts[i - 1].claimed = true;
-                emit PayoutClaimed(allPayouts[i - 1].id, msg.sender, allPayouts[i - 1].amount, block.timestamp);
+                emit PayoutClaimed(
+                    allPayouts[i - 1].id,
+                    msg.sender,
+                    allPayouts[i - 1].amount,
+                    block.timestamp
+                );
             }
         }
     }
 
-    // Server-triggered automatic payout (optional, for backend automation)
-    function serverPayout(address _to, uint256 _amount) external onlyServer nonReentrant {
+    // Server-triggered payout
+    function serverPayout(address _to, uint256 _amount)
+        external
+        onlyServer
+        nonReentrant
+    {
         require(_amount > 0, "Invalid amount");
-        require(claimableBalance[_to] >= _amount, "Insufficient claimable balance");
+        require(
+            claimableBalance[_to] >= _amount,
+            "Insufficient claimable balance"
+        );
 
         claimableBalance[_to] -= _amount;
         require(usdtToken.transfer(_to, _amount), "Transfer failed");
     }
 
-    // Emergency withdrawal by owner
-    function emergencyWithdraw(address _to, uint256 _amount) external onlyOwner {
+    // Emergency withdrawal
+    function emergencyWithdraw(address _to, uint256 _amount)
+        external
+        onlyOwner
+    {
         require(usdtToken.transfer(_to, _amount), "Transfer failed");
     }
 }
