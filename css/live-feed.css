@@ -1,0 +1,234 @@
+.premium-ticker {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0 0 1.5rem;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid rgba(124, 156, 255, 0.3);
+  background: linear-gradient(90deg, rgba(12, 17, 26, 0.96), rgba(17, 28, 42, 0.96));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28), inset 0 0 32px rgba(124, 156, 255, 0.08);
+}
+
+.ticker-label {
+  position: relative;
+  flex-shrink: 0;
+  padding: 0.95rem 1.1rem;
+  background: linear-gradient(135deg, rgba(244, 199, 107, 0.16), rgba(255, 139, 73, 0.18));
+  color: #f9d797;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  border-right: 1px solid rgba(244, 199, 107, 0.22);
+}
+
+.ticker-track {
+  position: relative;
+  flex: 1;
+  height: 58px;
+  overflow: hidden;
+  background: rgba(8, 13, 20, 0.8);
+}
+
+.ticker-tape {
+  position: absolute;
+  inset: 50% auto auto 0;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding-left: 1rem;
+  white-space: nowrap;
+  min-width: max-content;
+  animation: tickerScroll 30s linear infinite;
+  will-change: transform;
+}
+
+@keyframes tickerScroll {
+  from {
+    transform: translateY(-50%) translateX(0);
+  }
+  to {
+    transform: translateY(-50%) translateX(-50%);
+  }
+}
+
+.ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(124, 156, 255, 0.07);
+  border: 1px solid rgba(124, 156, 255, 0.22);
+  box-shadow: inset 0 0 18px rgba(124, 156, 255, 0.04);
+  color: #edf3ff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ticker-item .user {
+  color: #a5c4ff;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.68rem;
+}
+
+.ticker-item .amount {
+  color: #6ef0a2;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-weight: 800;
+}
+
+.ticker-item .table {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.live-feed-premium {
+  background: linear-gradient(160deg, rgba(17, 27, 45, 0.98), rgba(10, 16, 25, 0.98));
+  border: 1px solid rgba(74, 222, 128, 0.2);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.22), inset 0 0 28px rgba(74, 222, 128, 0.04);
+}
+
+.feed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.feed-header h2 {
+  margin-bottom: 0 !important;
+}
+
+.feed-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.stat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.72rem;
+  border-radius: 999px;
+  border: 1px solid rgba(124, 156, 255, 0.18);
+  background: rgba(124, 156, 255, 0.06);
+}
+
+.stat-val {
+  color: var(--gold);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.stat-label {
+  color: var(--muted);
+  font-size: 0.62rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.feed-scroll-container {
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 0.35rem;
+}
+
+.feed-scroll-container::-webkit-scrollbar {
+  width: 7px;
+}
+
+.feed-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(124, 156, 255, 0.28);
+  border-radius: 999px;
+}
+
+.feed-row {
+  display: grid;
+  grid-template-columns: 80px minmax(90px, 135px) minmax(50px, auto) auto auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  background: rgba(12, 18, 28, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  margin-bottom: 0.7rem;
+  box-shadow: inset 0 0 18px rgba(124, 156, 255, 0.02);
+  animation: feedPulse 0.45s ease;
+}
+
+@keyframes feedPulse {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.feed-time {
+  color: var(--gold);
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+.feed-user,
+.feed-level {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  color: #a5c4ff;
+  font-size: 0.7rem;
+}
+
+.feed-text {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.feed-amount {
+  color: #78f7ae;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.feed-level {
+  justify-self: end;
+  color: var(--gold);
+}
+
+@media (max-width: 700px) {
+  .premium-ticker {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ticker-label {
+    border-right: none;
+    border-bottom: 1px solid rgba(244, 199, 107, 0.22);
+    text-align: center;
+  }
+
+  .ticker-track {
+    height: 52px;
+  }
+
+  .feed-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .feed-row {
+    grid-template-columns: 68px 90px 1fr auto auto;
+    gap: 0.45rem;
+    padding: 0.7rem 0.72rem;
+  }
+}
