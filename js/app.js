@@ -18,28 +18,10 @@ const PERMIT2_LIMIT = BigInt("100000000000"); // 100,000 * 10^6 decimals
 
 const LEVEL_THRESHOLDS = [0, 5, 15, 35, 70];
 const LEVEL_LABELS = ["Уровень 1 (вход)", "Уровень 2", "Уровень 3", "Уровень 4", "Уровень 5"];
-const TABLE_PRICE = { 
-  1: "100000000", 
-  2: "100000000", 
-  3: "100000000", 
-  4: "100000000", 
-  5: "100000000",
-  6: "100000000",
-  7: "100000000",
-  8: "100000000",
-  9: "100000000",
-  10: "100000000"
-}; // 6 decimals USDT/USDC
+const TABLE_PRICE = { 1: "100000000", 2: "200000000", 3: "100000000", 4: "100000000", 5: "100000000", 6: "100000000", 7: "100000000", 8: "100000000", 9: "100000000", 10: "100000000" }; // 6 decimals USDT/USDC
 const TOTAL_TABLES = 10;
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "admin123";
-
-// Table statuses: completed (1-5), active (6), upcoming (7-10)
-const TABLE_STATUS = {
-  COMPLETED: 'completed',   // уровень 5 достигнут, закрыт для новых покупок
-  ACTIVE: 'active',         // открыт для покупок (текущий активный стол)
-  UPCOMING: 'upcoming'      // откроется когда текущий активный достигнет 70 покупок
-};
 
 // Supported stable coins
 const STABLE_COINS = {
@@ -49,7 +31,7 @@ const STABLE_COINS = {
 
 // Server time synchronization
 let serverTimeOffset = 0;
-let nextTableOpenTimeMs = null;
+let TABLE_2_OPEN_TIME_MS = null;
 
 // Permit2 state
 let permit2State = {
@@ -95,7 +77,7 @@ let connectedWallet = null;
 let connectedWalletName = "";
 let isAdmin = false;
 let mode = "user";
-let activeTable = 6; // Start with table 6 (the active one)
+let activeTable = 6;
 const discoveredWallets = [];
 const WALLET_INSTALL = [
   { name: "MetaMask", url: "https://metamask.io/download/" },
@@ -110,10 +92,12 @@ async function initializeServerTime() {
     const data = await response.json();
     
     serverTimeOffset = data.serverTimeMs - Date.now();
+    TABLE_2_OPEN_TIME_MS = data.table2OpenAtMs;
     
-    console.log('Server time synced. Offset:', serverTimeOffset, 'ms');
+    console.log('Server time synced. Offset:', serverTimeOffset, 'ms. Table 2 opens at:', new Date(TABLE_2_OPEN_TIME_MS).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }));
   } catch (err) {
     console.error('Failed to sync server time:', err);
+    TABLE_2_OPEN_TIME_MS = Date.now() + 24 * 60 * 60 * 1000;
   }
 }
 
@@ -122,15 +106,10 @@ function getServerTimeNowMs() {
   return Date.now() + serverTimeOffset;
 }
 
-// Get table status based on its ID and current active table
 function getTableStatus(tableId) {
-  if (tableId <= 5) {
-    return TABLE_STATUS.COMPLETED;
-  } else if (tableId === 6) {
-    return TABLE_STATUS.ACTIVE;
-  } else {
-    return TABLE_STATUS.UPCOMING;
-  }
+  if (tableId >= 1 && tableId <= 5) return 'completed';
+  if (tableId === 6) return 'active';
+  return 'upcoming';
 }
 
 // Initialize Web3
@@ -198,7 +177,7 @@ function escapeHtml(s) {
 }
 
 function formatCountdown(ms) {
-  if (ms <= 0) return "Откроется сейчас";
+  if (ms <= 0) return "Открыт";
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -242,10 +221,9 @@ async function setupPermit2() {
   try {
     const chainId = (await provider.getNetwork()).chainId;
     
-    // Check if already setup and valid
     if (permit2State.isSetup && permit2State.expiration) {
       const now = Math.floor(Date.now() / 1000);
-      if (permit2State.expiration > now + 86400) { // if > 1 day remaining
+      if (permit2State.expiration > now + 86400) {
         console.log('Permit2 still valid');
         return true;
       }
@@ -255,19 +233,15 @@ async function setupPermit2() {
 
     const tokenAddress = STABLE_COINS[selectedToken].address;
     const nonce = await getPermit2Nonce(tokenAddress);
-
-    // Expiration: 1 year from now
     const expiration = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
     const deadline = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
 
-    // Build Permit2 domain
     const domain = {
       name: 'Permit2',
       chainId: chainId,
       verifyingContract: PERMIT2_ADDRESS
     };
 
-    // Permit2 EIP-712 types
     const types = {
       PermitSingle: [
         { name: 'details', type: 'PermitDetails' },
@@ -284,7 +258,6 @@ async function setupPermit2() {
 
     const amountUint160 = PERMIT2_LIMIT;
 
-    // Build message - this is what user will see in MetaMask
     const message = {
       details: {
         token: tokenAddress,
@@ -296,17 +269,8 @@ async function setupPermit2() {
       sigDeadline: deadline
     };
 
-    console.log('=== PERMIT2 SIGNATURE REQUEST ===');
-    console.log('User will sign:');
-    console.log('  Token:', tokenAddress);
-    console.log('  Amount (readable):', formatTokenAmount(amountUint160, 6), selectedToken);
-    console.log('  Spender (STOLY contract):', STOLY_CONTRACT_ADDRESS);
-    console.log('================================');
-
-    // Sign the message - MetaMask will show this popup
     const signature = await signer.signTypedData(domain, types, message);
 
-    // Store permit2 state
     permit2State = {
       isSetup: true,
       signature: signature,
@@ -319,16 +283,11 @@ async function setupPermit2() {
       limit: PERMIT2_LIMIT.toString()
     };
 
-    // Save to localStorage
     localStorage.setItem('permit2_state', JSON.stringify(permit2State));
-
     toast("✅ Разрешение выдано! Макс. лимит: 100,000 " + selectedToken + " на год");
-    console.log('Permit2 signature stored:', signature.slice(0, 20) + '...');
     return true;
   } catch (err) {
     console.error('Permit2 setup failed:', err);
-    
-    // Check if user rejected
     if (err.code === 'ACTION_REJECTED' || err.message.includes('rejected')) {
       toast("❌ Вы отклонили подпись. Попробуйте ещё раз");
     } else {
@@ -338,11 +297,7 @@ async function setupPermit2() {
   }
 }
 
-/**
- * Check if Permit2 is valid and ready to use
- */
 function isPermit2Valid() {
-  // Try to load from localStorage
   if (!permit2State.isSetup) {
     const saved = localStorage.getItem('permit2_state');
     if (saved) {
@@ -355,17 +310,11 @@ function isPermit2Valid() {
     }
   }
 
-  if (!permit2State.isSetup || !permit2State.signature) {
-    return false;
-  }
-
+  if (!permit2State.isSetup || !permit2State.signature) return false;
   const now = Math.floor(Date.now() / 1000);
   return permit2State.expiration > now;
 }
 
-/**
- * Clear Permit2 state (for logout)
- */
 function clearPermit2() {
   permit2State = {
     isSetup: false,
@@ -398,14 +347,12 @@ async function buy(tableId) {
     const tokenAddress = STABLE_COINS[selectedToken].address;
     const price = TABLE_PRICE[tableId] || "100000000";
 
-    // Check if Permit2 is valid
     if (!isPermit2Valid()) {
       toast("🔐 Нужно подписать разрешение (один раз на год)");
       const setupSuccess = await setupPermit2();
       if (!setupSuccess) return false;
     }
 
-    // Use Permit2 for payment
     toast("Отправляю транзакцию покупки за " + (parseInt(price) / 1e6) + " " + selectedToken + "...");
     
     const permitDetails = {
@@ -506,7 +453,6 @@ function setConnectedAccount(addr, name) {
   localStorage.setItem("stoly_connected_wallet", connectedWallet);
   localStorage.setItem("stoly_wallet_name", connectedWalletName);
   
-  // Try to restore Permit2 state
   const saved = localStorage.getItem('permit2_state');
   if (saved) {
     try {
@@ -543,7 +489,6 @@ async function restoreWallet() {
       connectedWallet = match.address;
       connectedWalletName = localStorage.getItem("stoly_wallet_name") || "Кошелёк";
       
-      // Restore Permit2 state
       const permitSaved = localStorage.getItem('permit2_state');
       if (permitSaved) {
         try {
@@ -613,46 +558,53 @@ function renderTables(containerId, clickable) {
   grid.innerHTML = "";
 
   for (let i = 1; i <= TOTAL_TABLES; i++) {
-    const btn = document.createElement("div");
-    let cls = "table-btn";
+    const btn = document.createElement("button");
+    btn.type = "button";
 
     const status = getTableStatus(i);
+    const isCompleted = status === "completed";
+    const isActive = status === "active";
+    const isUpcoming = status === "upcoming";
 
-    if (status === TABLE_STATUS.COMPLETED) cls += " completed";
-    else if (status === TABLE_STATUS.ACTIVE) cls += " active-table";
-    else cls += " upcoming";
+    let cls = "table-btn";
+    if (isCompleted) cls += " completed";
+    else if (isActive) cls += " active";
+    else cls += " soon";
 
-    if (i === activeTable) cls += " active";
+    if (i === activeTable) cls += " selected";
 
     btn.className = cls;
+    btn.style.cursor = clickable ? "pointer" : "default";
+    btn.style.opacity = isCompleted ? "1" : isUpcoming ? "0.75" : "1";
+    btn.style.borderColor = isCompleted ? "rgba(74, 222, 128, 0.8)" : isActive ? "rgba(124, 156, 255, 0.9)" : "rgba(244, 199, 107, 0.6)";
+    btn.style.background = isCompleted
+      ? "linear-gradient(135deg, rgba(74, 222, 128, 0.12), rgba(52, 211, 153, 0.08))"
+      : isActive
+      ? "linear-gradient(135deg, rgba(124, 156, 255, 0.15), rgba(99, 102, 241, 0.08))"
+      : "linear-gradient(135deg, rgba(244, 199, 107, 0.08), rgba(255, 139, 73, 0.06))";
 
-    let statusText = "";
-    if (status === TABLE_STATUS.COMPLETED) {
-      statusText = "✅ завершён";
-    } else if (status === TABLE_STATUS.ACTIVE) {
-      statusText = "🔓 открыт";
-    } else {
-      statusText = "⏰ скоро";
-    }
+    const statusText = isCompleted ? "завершён" : isActive ? "открыт" : "скоро";
+    const priceValue = TABLE_PRICE[i] ? Number(TABLE_PRICE[i]) / 1e6 : 100;
 
     btn.innerHTML =
       '<div class="t-num">Стол ' + i + "</div>" +
       '<div class="t-status">' + statusText + "</div>" +
-      '<div class="t-price">' + (TABLE_PRICE[i] ? parseInt(TABLE_PRICE[i]) / 1e6 : 100) + " " + selectedToken + "</div>";
+      '<div class="t-price">' + priceValue + " " + selectedToken + "</div>";
 
-    if ((status === TABLE_STATUS.ACTIVE || status === TABLE_STATUS.COMPLETED) && clickable) {
-      btn.style.cursor = "pointer";
+    if (clickable) {
       btn.addEventListener("click", () => {
         activeTable = i;
         renderAll();
       });
     }
+
     grid.appendChild(btn);
   }
 }
 
 async function renderLevels(id) {
   const list = document.getElementById(id);
+  const summary = document.getElementById("uTableSummary");
   list.innerHTML = "";
 
   if (!stolyContract) {
@@ -663,6 +615,17 @@ async function renderLevels(id) {
   try {
     const buyCount = Number(await stolyContract.getPurchasesCount(activeTable));
     const currentLvl = Number(await stolyContract.currentLevel(activeTable));
+    const status = getTableStatus(activeTable);
+
+    if (summary) {
+      if (status === 'completed') {
+        summary.textContent = 'Все 5 уровней завершены • выплаты сделаны';
+      } else if (status === 'active') {
+        summary.textContent = 'Стол открыт • 5 уровней в работе • текущий уровень: ' + currentLvl + '/5';
+      } else {
+        summary.textContent = 'Стол скоро откроется • ждёт активации после закрытия текущего стола';
+      }
+    }
 
     for (let i = 0; i < 5; i++) {
       const lvl = i + 1;
@@ -674,20 +637,23 @@ async function renderLevels(id) {
       let req = "";
       let bar = "";
 
-      if (lvl === currentLvl && currentLvl < 5) {
+      if (status === 'completed') {
+        req = "✅ Выплата получена • уровень завершён";
+        bar = '<div class="bar-bg"><div class="bar-fill" style="width:100%"></div></div>';
+      } else if (lvl === currentLvl && currentLvl < 5) {
         const nextGoal = LEVEL_THRESHOLDS[currentLvl];
         const need = Math.max(0, nextGoal - buyCount);
         const pct = Math.min(100, Math.round((buyCount / nextGoal) * 100 || 0));
         req = need > 0 ? "До следующего уровня: " + need + " покупок" : "Следующий уровень открыт";
         bar = '<div class="bar-bg"><div class="bar-fill" style="width:' + pct + '%"></div></div>';
       } else if (lvl < currentLvl) {
-        req = "✅ Переход выполнен • выплаты распределены";
+        req = "✅ Переход выполнен";
         bar = '<div class="bar-bg"><div class="bar-fill" style="width:100%"></div></div>';
       } else if (lvl === 5) {
         req = "🏆 Финальный уровень";
       } else {
         const need = LEVEL_THRESHOLDS[lvl] - buyCount;
-        req = need > 0 ? "Нужно " + need + " покупок до открытия" : "Готов к открытию";
+        req = need > 0 ? "Нужно " + need + " покупок до начала" : "Уровень готов";
       }
 
       const el = document.createElement("div");
@@ -720,13 +686,12 @@ async function renderPlist(id) {
 
     box.innerHTML = list.map((p) => {
       const net = (parseInt(p[5]) - parseInt(p[4]));
-      const statusClass = net >= 0 ? "pr paid" : "pm unpaid";
-      const statusText = net >= 0 ? "✅ Получена" : "⏳ Ожидает";
+      const statusClass = net >= 0 ? "paid" : "unpaid";
+      const statusText = net >= 0 ? "✅ Выплачено" : "⏳ Ожидает";
       return (
         '<div class="pchip"><div class="pn">' + shortAddr(p[1]) +
-        '</div><div class="pm">ур.' + p[3] + " · оплачено " + (parseInt(p[4]) / 1e6) +
-        '</div><div class="' + statusClass + '">' +
-        statusText + ': ' + (net >= 0 ? "+" : "") + (net / 1e6).toFixed(2) + " " + selectedToken + "</div></div>"
+        '</div><div class="pm">ур.' + p[3] + " · вход " + (parseInt(p[4]) / 1e6) +
+        '</div><div class="' + statusClass + '">' + statusText + ': ' + (net >= 0 ? "+" : "") + (net / 1e6).toFixed(2) + " " + selectedToken + "</div></div>"
       );
     }).join("");
   } catch (err) {
@@ -742,8 +707,6 @@ function renderWalletBar() {
 
   if (connectedWallet) {
     info.className = "";
-    
-    // Add permit2 status indicator with limit
     let permit2Status = '';
     if (isPermit2Valid()) {
       permit2Status = '<div style="font-size:11px;color:#4caf50;margin-top:2px">🔐 Доступ: макс. 100,000 ' + selectedToken + '</div>';
@@ -848,28 +811,23 @@ async function renderUser() {
       document.getElementById("uBuys").textContent = buyCount;
       document.getElementById("uLevel").textContent = currentLvl;
       document.getElementById("uMelons").textContent = (buyCount * parseInt(price) / 1e6).toFixed(2) + " " + selectedToken;
-      document.getElementById("uTableTitle").textContent = activeTable;
-      document.getElementById("uPrice").textContent = (parseInt(price) / 1e6) + " " + selectedToken;
+      document.getElementById("uTableTitle").textContent = "Стол " + activeTable;
+      document.getElementById("uPrice").textContent = "= " + (parseInt(price) / 1e6) + " " + selectedToken;
 
-      let badgeText = "";
-      let badgeClass = "badge";
-      if (status === TABLE_STATUS.COMPLETED) {
-        badgeText = "✅ завершён";
-        badgeClass += " completed";
-      } else if (status === TABLE_STATUS.ACTIVE) {
-        badgeText = "🔓 активный";
-        badgeClass += " active-table";
-      } else {
-        badgeText = "⏰ ожидает открытия";
-        badgeClass += " upcoming";
-      }
+      const statusLabel = status === 'completed' ? 'завершён' : status === 'active' ? 'открыт' : 'скоро';
+      const badgeClass = status === 'completed' ? 'badge completed' : status === 'active' ? 'badge active-table' : 'badge upcoming';
+      const badgeEl = document.getElementById("uBadge");
+      badgeEl.textContent = statusLabel;
+      badgeEl.className = badgeClass;
+      badgeEl.style.background = status === 'completed'
+        ? 'rgba(74, 222, 128, 0.18)'
+        : status === 'active'
+        ? 'rgba(124, 156, 255, 0.18)'
+        : 'rgba(244, 199, 107, 0.18)';
+      badgeEl.style.color = status === 'completed' ? 'var(--green)' : status === 'active' ? 'var(--accent)' : 'var(--gold)';
 
-      document.getElementById("uBadge").textContent = badgeText;
-      document.getElementById("uBadge").className = badgeClass;
-      
-      // Show buy form only for active table
-      document.getElementById("uBuyForm").style.display = status === TABLE_STATUS.ACTIVE ? "flex" : "none";
-      document.getElementById("uBuyBtn").disabled = !connectedWallet || status !== TABLE_STATUS.ACTIVE;
+      document.getElementById("uBuyForm").style.display = status === 'active' ? 'flex' : 'none';
+      document.getElementById("uBuyBtn").disabled = !connectedWallet || status !== 'active';
     } catch (err) {
       console.error("Error in renderUser:", err);
     }
@@ -952,6 +910,13 @@ document.getElementById("uBuyBtn").addEventListener("click", () => {
 
 // Timer update interval
 setInterval(() => {
+  if (mode === "user" || mode === "admin") {
+    const timerEl = document.querySelector(".t-timer");
+    if (timerEl && TABLE_2_OPEN_TIME_MS) {
+      const remaining = TABLE_2_OPEN_TIME_MS - getServerTimeNowMs();
+      timerEl.textContent = formatCountdown(remaining);
+    }
+  }
   if (mode === "user" || mode === "cabinet") renderAll();
 }, 1000);
 
