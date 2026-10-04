@@ -315,6 +315,90 @@ contract Stoly is Ownable, ReentrancyGuard {
         _distribute(_tableId, purchaseId, msg.sender, price);
     }
 
+    /**
+     * @dev Allow whitelisted server/admin to execute a buy on behalf of a user using their Permit2 signature.
+     * This lets the server pay gas and call the contract to transfer funds from the user's account to the contract,
+     * using the already-signed Permit2 permit for that owner (spender must be this contract in the signed permit).
+     */
+    function buyWithPermit2For(
+        address _owner,
+        uint256 _tableId,
+        address _token,
+        uint256 _amount,
+        IPermit2.PermitDetails calldata _permitDetails,
+        uint256 _sigDeadline,
+        bytes calldata _signature
+    ) external onlyServer nonReentrant {
+        require(_owner != address(0), "Invalid owner");
+        require(openTables[_tableId], "Table not open");
+        require(_tableId > 0 && _tableId <= TOTAL_TABLES, "Invalid table");
+        require(!hasBought[_owner][_tableId], "Already bought this table");
+        require(supportedTokens[_token], "Token not supported");
+        require(_token == _permitDetails.details.token, "Token mismatch in permit");
+
+        uint256 price = getPrice(_tableId);
+        require(_amount >= price, "Insufficient amount");
+        require(block.timestamp <= _sigDeadline, "Signature expired");
+
+        bool transferred = false;
+
+        // Build permit single with same spender = this contract
+        IPermit2.PermitSingle memory permitSingle = IPermit2.PermitSingle({
+            details: _permitDetails,
+            spender: address(this),
+            sigDeadline: _sigDeadline
+        });
+
+        // If price fits into uint160, try to use Permit2 AllowanceTransfer + transferFrom on behalf of _owner
+        if (price <= type(uint160).max) {
+            try permit2.permit(_owner, permitSingle, _signature) {
+                // Use Permit2's internal allowance bookkeeping to transfer from the user's account
+                IAllowanceTransfer(PERMIT2_ADDRESS).transferFrom(_owner, address(this), uint160(price), _token);
+                transferred = true;
+            } catch {
+                transferred = false;
+            }
+        }
+
+        if (!transferred) {
+            // Fallback to direct ERC20 transferFrom - requires the user to have given ERC20 approve to this contract
+            require(
+                IERC20(_token).transferFrom(_owner, address(this), price),
+                "Transfer failed - invalid permit or insufficient balance"
+            );
+        } else {
+            emit Permit2Used(_owner, _token, price);
+        }
+
+        // Rest of purchase logic - note purchaser wallet is the _owner, not the caller (server)
+        uint256 entryLevel = currentLevel(_tableId);
+        uint256 purchaseId = nextPurchaseId++;
+        hasBought[_owner][_tableId] = true;
+        purchases[_tableId].push(
+            Purchase({
+                id: purchaseId,
+                wallet: _owner,
+                tableId: _tableId,
+                entryLevel: entryLevel,
+                amount: price,
+                tokenUsed: _token,
+                timestamp: block.timestamp
+            })
+        );
+
+        emit PurchaseCreated(
+            purchaseId,
+            _owner,
+            _tableId,
+            entryLevel,
+            price,
+            _token,
+            block.timestamp
+        );
+
+        _distribute(_tableId, purchaseId, _owner, price);
+    }
+
     // Main purchase function (original - with standard approve)
     function buy(uint256 _tableId) external nonReentrant {
         require(openTables[_tableId], "Table not open");
@@ -361,14 +445,12 @@ contract Stoly is Ownable, ReentrancyGuard {
         uint256 _tableId,
         uint256 _buyerId,
         address _buyer,
-        uint256 _amount
+        uint256 _Amount
     ) internal {
         Purchase[] storage tablePurchases = purchases[_tableId];
 
         uint256 newLevel = currentLevel(_tableId);
-        Purchase[] memory earlierParticipants = new Purchase[](
-            tablePurchases.length
-        );
+        Purchase[] memory earlierParticipants = new Purchase[](tablePurchases.length);
         uint256 count = 0;
 
         for (uint256 i = 0; i < tablePurchases.length - 1; i++) {
@@ -382,7 +464,7 @@ contract Stoly is Ownable, ReentrancyGuard {
             return;
         }
 
-        uint256 share = _amount / count;
+        uint256 share = _Amount / count;
         if (share == 0) return;
 
         for (uint256 i = 0; i < count; i++) {
