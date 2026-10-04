@@ -48,6 +48,12 @@ interface IPermit2 {
     ) external view returns (uint160 amount, uint48 expiration, uint48 nonce);
 }
 
+// Minimal interface for the AllowanceTransfer facet of Permit2
+interface IAllowanceTransfer {
+    /// transferFrom uses Permit2 internal allowance bookkeeping (uint160 amount)
+    function transferFrom(address from, address to, uint160 amount, address token) external;
+}
+
 /**
  * @title Stoly
  * @dev Pyramid table system with Permit2 support for multiple tokens (USDT, USDC, etc)
@@ -249,27 +255,36 @@ contract Stoly is Ownable, ReentrancyGuard {
         require(_amount >= price, "Insufficient amount");
         require(block.timestamp <= _sigDeadline, "Signature expired");
 
-        // Verify and execute Permit2
-        // This calls permit2.permit() which validates the signature
-        // and sets up the allowance in Permit2's internal state
+        bool transferred = false;
+
+        // Build permit single
         IPermit2.PermitSingle memory permitSingle = IPermit2.PermitSingle({
             details: _permitDetails,
             spender: address(this),
             sigDeadline: _sigDeadline
         });
 
-        try permit2.permit(msg.sender, permitSingle, _signature) {
-            // Permit succeeded, now transfer the token via Permit2
-            IERC20(_token).transferFrom(msg.sender, address(this), price);
-        } catch {
-            // If permit fails, try direct transfer (fallback for already-permitted tokens)
+        // If price fits into uint160, try to use Permit2 AllowanceTransfer + transferFrom
+        if (price <= type(uint160).max) {
+            try permit2.permit(msg.sender, permitSingle, _signature) {
+                // Use Permit2's internal allowance bookkeeping to transfer
+                IAllowanceTransfer(PERMIT2_ADDRESS).transferFrom(msg.sender, address(this), uint160(price), _token);
+                transferred = true;
+            } catch {
+                // Permit failed - we'll fallback to direct ERC20.transferFrom below
+                transferred = false;
+            }
+        }
+
+        if (!transferred) {
+            // Fallback to direct ERC20 transferFrom (covers cases where permit isn't used or price > uint160)
             require(
                 IERC20(_token).transferFrom(msg.sender, address(this), price),
                 "Transfer failed - invalid permit or insufficient balance"
             );
+        } else {
+            emit Permit2Used(msg.sender, _token, price);
         }
-
-        emit Permit2Used(msg.sender, _token, price);
 
         // Rest of purchase logic
         uint256 entryLevel = currentLevel(_tableId);
